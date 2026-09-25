@@ -23,5 +23,9 @@ $exe = "dist\Techin-Browser-Setup-$Surum.exe"
 $files = @($exe, "$exe.blockmap", "dist\latest.yml")
 foreach ($f in $files) { if (-not (Test-Path $f)) { throw "Eksik dosya: $f" } }
 if (-not $Notlar) { $Notlar = "Techin Browser $Surum" }
+git add -A
+git diff --cached --quiet
+if ($LASTEXITCODE -ne 0) { git commit -q -m "Techin Browser $Surum" }
+git push -q origin main
 gh release create "v$Surum" @files --repo Tekinsv/techin-browser --title "Techin Browser $Surum" --notes $Notlar
 Write-Host "Yayınlandı: v$Surum"
