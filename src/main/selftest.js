@@ -333,6 +333,18 @@ async function run(ctl) {
         await yt.wc.executeJavaScript("(() => { const a = [...document.querySelectorAll('ytd-guide-entry-renderer a, ytd-mini-guide-entry-renderer a')].find((x) => /shorts/i.test(x.getAttribute('href') || '')); if (a) a.click(); })()", true).catch(() => {});
         const vid = await waitFor(() => yt.wc.executeJavaScript("(() => { const v = document.querySelector('ytd-shorts video'); return !!v && v.readyState > 2 && location.pathname.startsWith('/shorts'); })()"), 15000, 500);
         ok('Reklam engelleyici açıkken YouTube Shorts açılıp oynuyor (gri ekran yok)', vid && !ytErrs.length, ytErrs.join(' | ') || yt.url);
+        if (vid) {
+          const shortId = (p) => (typeof p === 'string' && p.length > 14 && p.startsWith('/shorts/') ? p : null);
+          const before = await waitFor(async () => shortId(await yt.wc.executeJavaScript('location.pathname')), 8000, 200);
+          await sleep(800);
+          const pt = await yt.wc.executeJavaScript('(() => { const r = document.getElementById("shorts-container").getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()');
+          await yt.wc.executeJavaScript("window.__wp = 'none'; window.addEventListener('wheel', (e) => { window.__wp = e.defaultPrevented; }, { passive: true }); true");
+          yt.wc.focus();
+          yt.wc.sendInputEvent({ type: 'mouseWheel', x: pt.x, y: pt.y, deltaX: 0, deltaY: -100, wheelTicksX: 0, wheelTicksY: -1, canScroll: true, hasPreciseScrollingDeltas: false });
+          const after = await waitFor(async () => { const p = await yt.wc.executeJavaScript('location.pathname'); return p !== before && p; }, 5000, 100);
+          if (!after) console.log('SHORTS-DIAG', JSON.stringify(await yt.wc.executeJavaScript('({ active: document.activeElement && (document.activeElement.tagName + "#" + document.activeElement.id), focus: document.hasFocus(), prevented: window.__wp, hover: (document.elementFromPoint(innerWidth / 2, innerHeight / 2) || {}).id, btn: !!document.querySelector("#navigation-button-down button") })')));
+          ok('Shorts: tek tekerlek adımı YouTube kendi kayma geçişiyle sonraki videoya geçiyor', !!after, `${before} -> ${after}`);
+        }
         yt.close({ force: true });
         w.activateTab(tab.id);
       }

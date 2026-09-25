@@ -58,15 +58,42 @@ if (FLAG_NO_PASSKEYS) {
 }
 
 // ------------------------------------------------------------ 3) smooth wheel
-// YouTube Shorts declares a snapping feed but gives the videos no snap points,
-// so Chromium only nudges it and YouTube then jumps. With snap points, Chromium's
-// compositor itself slides to the next video - smooth even while YouTube is busy.
-if (FLAG_SMOOTH && /(^|\.)youtube\.com$/.test(location.hostname)) {
-  try {
-    webFrame.insertCSS('#shorts-container > :not(#cinematic-shorts-scrim) { scroll-snap-align: start; scroll-snap-stop: always; }');
-  } catch {}
+// YouTube Shorts: YouTube pins its feed while it swaps videos, so any scroll
+// animation we run fights it (visible jitter). Its own "next video" transition
+// (the arrow keys) is smooth and runs on Chromium's compositor - use that: one
+// wheel notch = one ArrowDown/ArrowUp, at most one per slide.
+const IS_YOUTUBE = /(^|\.)youtube\.com$/.test(location.hostname);
+let ytNextAt = 0;
+function youtubeShortsWheel(e) {
+  if (!IS_YOUTUBE || !location.pathname.startsWith('/shorts')) return false;
+  const inFeed = e.composedPath().some((n) => n instanceof Element && (n.id === 'shorts-container' || n.tagName === 'YTD-SHORTS'));
+  if (!inFeed) return false;
+  const a = document.activeElement;
+  if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return false;
+  e.preventDefault();
+  const now = performance.now();
+  if (now < ytNextAt) return true;
+  ytNextAt = now + 450;
+  inMain((down) => {
+    const key = down ? 'ArrowDown' : 'ArrowUp';
+    const code = down ? 40 : 38;
+    const target = document.querySelector('ytd-shorts #shorts-player') || document.activeElement || document;
+    // After arriving from another YouTube page the focus sits on a link and
+    // YouTube ignores arrow keys: give the player focus first.
+    if (target.focus && document.activeElement !== target) target.focus({ preventScroll: true });
+    const init = { key, code: key, keyCode: code, which: code, bubbles: true, cancelable: true, composed: true };
+    const before = location.pathname;
+    target.dispatchEvent(new KeyboardEvent('keydown', init));
+    target.dispatchEvent(new KeyboardEvent('keyup', init));
+    // Fallback: YouTube's own up/down navigation buttons (same animation).
+    setTimeout(() => {
+      if (location.pathname !== before) return;
+      const btn = document.querySelector((down ? '#navigation-button-down' : '#navigation-button-up') + ' button');
+      if (btn) btn.click();
+    }, 250);
+  }, e.deltaY > 0);
+  return true;
 }
-
 if (FLAG_SMOOTH) {
   const DURATION = 360; // ms per wheel notch, like Firefox
   const SNAP_DURATION = 460; // one Short/Reel slides in
@@ -226,6 +253,7 @@ if (FLAG_SMOOTH) {
       // Touchpads already scroll smoothly: only take over for notched mouse wheels.
       const notched = e.deltaMode !== 0 || (e.wheelDeltaY !== 0 && e.wheelDeltaY % 120 === 0 && Math.abs(e.deltaY) >= 40);
       if (!notched) return;
+      if (youtubeShortsWheel(e)) return;
       let dy = e.deltaY;
       if (e.deltaMode === 1) dy *= 40;
       else if (e.deltaMode === 2) dy *= window.innerHeight;
