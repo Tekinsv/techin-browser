@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Techin Browser</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="bg"></div>
+  <header id="topbar" class="drag">
+    <div class="tb-left">
+      <button class="ib" id="btn-appmenu" data-tip="Menü"><img src="assets/icon.png" alt="" draggable="false"></button>
+      <button class="ib" id="btn-sidebar" data-tip="Kenar çubuğunu gizle / göster (Ctrl+Shift+S)"></button>
+      <div class="tb-nav" id="tbnav">
+        <button class="ib" id="btn-back" data-tip="Geri (Alt+←)"></button>
+        <button class="ib" id="btn-fwd" data-tip="İleri (Alt+→)"></button>
+        <button class="ib" id="btn-reload" data-tip="Yenile (F5)"></button>
+      </div>
+    </div>
+
+    <div class="tb-center" id="tbcenter">
+      <button class="ib sm" id="btn-copy" data-tip="Bağlantıyı kopyala (Ctrl+Shift+C)"></button>
+      <button id="urlbar" data-tip="Adresi düzenle (Ctrl+L)">
+        <span class="sec" id="sec"></span>
+        <span class="host" id="host"></span>
+        <span class="progress"></span>
+      </button>
+      <span class="chip hidden" id="zoomchip"></span>
+      <span class="chip hidden" id="shield"></span>
+      <button class="ib sm" id="btn-siteinfo" data-tip="Site ayarları"></button>
+    </div>
+    <div class="tb-right">
+      <div id="toasts"></div>
+      <button class="update-pill hidden" id="btn-update"></button>
+      <button class="ib" id="btn-split" data-tip="Bölünmüş görünüm (Ctrl+Shift+\)"></button>
+      <div class="winctl">
+        <button class="min" data-win="min" data-tip="Simge durumuna küçült">&#xE921;</button>
+        <button class="max" data-win="max" data-tip="Ekranı kapla">&#xE922;</button>
+        <button class="close" data-win="close" data-tip="Kapat">&#xE8BB;</button>
+      </div>
+    </div>
+  </header>
+
+  <aside id="sidebar">
+    <div id="favorites"></div>
+
+    <div class="space-head" id="spacehead">
+      <span class="emoji" id="space-emoji"></span>
+      <span class="name" id="space-name"></span>
+      <button class="ib" id="space-menu"></button>
+    </div>
+
+    <div class="sb-scroll" id="sbscroll">
+      <div class="list" id="pinned"></div>
+      <div class="divider" id="divider">
+        <div class="line"></div>
+        <button class="clear" id="btn-clear"></button>
+      </div>
+      <div class="list" id="today"></div>
+      <button class="row newtab" id="btn-newtab"><span class="fi"></span><span class="t"></span></button>
+    </div>
+
+    <div id="status"></div>
+
+    <div class="sb-foot">
+      <button class="ib dl-ring" id="btn-downloads"></button>
+      <div id="spaces"></div>
+      <button class="ib" id="btn-newspace"></button>
+      <button class="ib" id="btn-menu"></button>
+    </div>
+    <div id="resizer"></div>
+  </aside>
+
+  <div id="content-shadow"></div>
+  <main id="content">
+    <div id="strip"></div>
+    <div class="page hidden" id="start"></div>
+    <div class="page hidden" id="panel"></div>
+    <div class="page hidden" id="errorpage"></div>
+  </main>
+
+  <div id="dim"></div>
+  <div id="modal"></div>
+  <div id="panefocus"></div>
+
+  <script src="../shared/i18n.js"></script>
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

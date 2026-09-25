@@ -1,0 +1,4 @@
+# Only used when testing the updater in development (npm run selftest).
+provider: generic
+url: http://127.0.0.1/
+updaterCacheDirName: techin-browser-updater
