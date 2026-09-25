@@ -162,6 +162,13 @@
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--fg', fg);
     root.style.setProperty('--fs', { small: '12px', normal: '13px', large: '14.5px' }[scale] || '13px');
+    // Panels, dialogs and the start page take their colors from the space's hue,
+    // so everything reads as one design instead of a separate gray app.
+    const ph = inc ? 265 : hue;
+    const pal = dark
+      ? { card: `hsl(${ph} 22% 10%)`, surface: `hsl(${ph} 20% 14%)`, surface2: `hsl(${ph} 18% 19%)`, line: `hsl(${ph} 18% 22%)`, pop: `hsl(${ph} 22% 13%)`, fg: '#eceff5', fg2: `hsl(${ph} 12% 70%)`, fg3: `hsl(${ph} 10% 52%)`, on: '#0b1220' }
+      : { card: `hsl(${ph} 30% 99%)`, surface: `hsl(${ph} 32% 96%)`, surface2: `hsl(${ph} 26% 92%)`, line: `hsl(${ph} 22% 89%)`, pop: '#ffffff', fg: `hsl(${ph} 25% 14%)`, fg2: `hsl(${ph} 10% 38%)`, fg3: `hsl(${ph} 8% 55%)`, on: '#ffffff' };
+    for (const [k, v] of Object.entries({ '--card': pal.card, '--surface': pal.surface, '--surface-2': pal.surface2, '--card-line': pal.line, '--pop': pal.pop, '--card-fg': pal.fg, '--card-fg-2': pal.fg2, '--card-fg-3': pal.fg3, '--on-accent': pal.on })) root.style.setProperty(k, v);
   }
 
   let resizing = null;
@@ -1243,6 +1250,7 @@
         h('div', { class: 'setting' }, h('div', { class: 'txt' }, h('b', { text: t('Zararlı ve sahte site koruması') }), threatStatus), toggle('malwareProtection')),
         row('Yalnızca HTTPS modu', 'Siteleri her zaman şifreli bağlantıyla açar; olmazsa size sorar.', toggle('httpsOnly')),
         row('Takip etme sinyali (GPC)', 'Sitelere verilerinizi satmamalarını ve paylaşmamalarını söyler.', toggle('gpc')),
+        row('Geçiş anahtarı (Windows Hello) istemleri', 'Kapalıyken siteler şifre yerine Windows Güvenliği PIN penceresini açamaz. Yeniden başlatma gerekir.', toggle('passkeys')),
         row('Engelleyicinin kapalı olduğu siteler', null, allow)
       ),
       group(

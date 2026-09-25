@@ -30,6 +30,7 @@ function startServer() {
     '/': '<!doctype html><title>Test Page</title><h1>Techin Test</h1><p>Hello Test world</p><a id="l" href="/second" target="_blank">x</a>',
     '/second': '<!doctype html><title>Second</title><p>second</p>',
     '/a': '<!doctype html><title>A</title><p>A</p>',
+    '/tall': '<!doctype html><title>Tall</title><body style="margin:0;height:6000px;background:linear-gradient(#fff,#ccd)"><p>tall</p></body>',
     '/b': '<!doctype html><title>B</title><p>B</p>',
     // Google's public Widevine test stream + license proxy, played with Shaka Player.
     '/drm':
@@ -253,6 +254,26 @@ async function run(ctl) {
     const dl2 = await waitFor(() => ctl.downloads.items.find((d) => d.filename === 'test-download (1).bin'), 10000);
     ok('Aynı adlı dosya üzerine yazılmadı (test-download (1).bin)', dl2);
 
+    // --- Firefox-like smooth wheel (page.js): sample scroll position every frame
+    const wheelRun = async (path) => {
+      tab.load(base + path);
+      await loaded(tab);
+      await tab.wc.executeJavaScript('window.__s = []; (function f(){ window.__s.push([performance.now(), Math.round(scrollY)]); if (window.__s.length < 90) requestAnimationFrame(f); })(); true');
+      tab.wc.focus();
+      tab.wc.sendInputEvent({ type: 'mouseWheel', x: 300, y: 300, deltaX: 0, deltaY: -100, wheelTicksX: 0, wheelTicksY: -1, canScroll: true, hasPreciseScrollingDeltas: false });
+      await sleep(1600);
+      const s = await tab.wc.executeJavaScript('({ s: window.__s, h: innerHeight })');
+      const ys = s.s.map((p) => p[1]);
+      const moving = s.s.filter((p, i) => i > 0 && p[1] !== s.s[i - 1][1]);
+      const ms = moving.length ? Math.round(moving[moving.length - 1][0] - moving[0][0]) : 0;
+      return { final: ys[ys.length - 1], steps: new Set(ys).size, ms, h: s.h };
+    };
+    const snapRun = await wheelRun('/long');
+    ok('Shorts tarzı sayfada tek tekerlek adımı sonraki videoya kayarak geçiyor', Math.abs(snapRun.final - snapRun.h) <= 2 && snapRun.steps >= 10 && snapRun.ms >= 250, JSON.stringify(snapRun));
+    const tallRun = await wheelRun('/tall');
+    ok('Normal sayfada tekerlek kaydırması yumuşak (Firefox gibi)', tallRun.final >= 90 && tallRun.final <= 110 && tallRun.steps >= 8 && tallRun.ms >= 200, JSON.stringify(tallRun));
+    const pk = await tab.wc.executeJavaScript("navigator.credentials.get({ publicKey: { challenge: new Uint8Array(16) } }).then(() => 'resolved', (e) => e.name).then((r) => typeof window.PublicKeyCredential + ' ' + r)");
+    ok('Geçiş anahtarı (Windows Hello) penceresi açılmıyor', pk === 'undefined NotAllowedError', pk);
     // --- scroll snapping page (Shorts-like)
     tab.load(base + '/long');
     await loaded(tab);
@@ -479,6 +500,7 @@ async function run(ctl) {
     ctl.setSetting('sidebarCompact', true);
     await sleep(500);
     ok('Simge şeridi modunda kenar çubuğu 52 px', w.metrics().sidebar === 52);
+    ok('Simge şeridinde üstte boşluk yok (alan başlığı gizli)', await w.uiView.webContents.executeJavaScript("getComputedStyle(document.getElementById('spacehead')).display === 'none'"));
     await capture('07-compact');
     ctl.setSetting('sidebarCompact', false);
     ctl.setSetting('theme', 'light');

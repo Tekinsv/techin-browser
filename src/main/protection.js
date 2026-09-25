@@ -72,7 +72,7 @@ class Protection {
     }
     if (!this.blocker || this.blockerLevel !== level || fileAge(file) > ENGINE_MAX_AGE) {
       try {
-        const fresh = await ElectronBlocker.fromLists(fetchImpl, lists, { loadCosmeticFilters: true, enableMutationObserver: true });
+        const fresh = await ElectronBlocker.fromLists(fetchImpl, lists, { loadCosmeticFilters: true, enableMutationObserver: false });
         const tmp = file + '.tmp';
         await fs.promises.writeFile(tmp, fresh.serialize());
         await fs.promises.rename(tmp, file);
@@ -133,7 +133,9 @@ class Protection {
       if (this.isAllowlisted(top)) return undefined;
       return this.blocker.onInjectCosmeticFilters(event, url, msg);
     });
-    ipcMain.handle('@ghostery/adblocker/is-mutation-observer-enabled', () => !!this.blocker?.config.enableMutationObserver);
+    // Watching every DOM change sends a stream of IPC to the main process on busy
+    // sites (YouTube, Instagram) and makes scrolling stutter - keep it off.
+    ipcMain.handle('@ghostery/adblocker/is-mutation-observer-enabled', () => false);
   }
 
   // ------------------------------------------------------------ malware / phishing

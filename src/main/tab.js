@@ -5,7 +5,6 @@ const { WebContentsView, dialog, clipboard } = require('electron');
 const { newId } = require('./library');
 const { isNavigable, isOpenableFromPage, hostOf, safeURL } = require('./url');
 const { classifyLoadError } = require('./policy');
-const { applySigninUserAgent } = require('./security');
 
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
 const MAX_NAV_ENTRIES = 50;
@@ -30,7 +29,12 @@ function tabWebPreferences(ses, settings) {
     navigateOnDragDrop: false,
     spellcheck: settings.spellcheck,
     backgroundThrottling: true,
-    enableWebSQL: false
+    enableWebSQL: false,
+    // Read by src/preload/page.js (smooth wheel, passkey pop-ups).
+    additionalArguments: [
+      ...(settings.smoothScroll === 'fluid' ? ['--techin-smooth-wheel'] : []),
+      ...(settings.passkeys ? [] : ['--techin-no-passkeys'])
+    ]
   };
 }
 
@@ -295,7 +299,6 @@ class Tab {
       this.changed();
     });
     wc.on('did-start-navigation', (e) => {
-      if (e.isMainFrame && !e.isSameDocument) applySigninUserAgent(this.ctl, wc, e.url);
       if (e.isMainFrame && !e.isSameDocument) {
         if (this.error) {
           this.error = null;
@@ -423,9 +426,6 @@ class Tab {
     // 'openExternal' permission prompt can ask the user.
     wc.on('will-navigate', (e) => {
       if (isInternalScheme(e.url)) e.preventDefault();
-    });
-    wc.on('did-redirect-navigation', (e) => {
-      if (e.isMainFrame) applySigninUserAgent(this.ctl, wc, e.url);
     });
     wc.on('will-redirect', (e) => {
       if (e.isMainFrame && isInternalScheme(e.url)) e.preventDefault();

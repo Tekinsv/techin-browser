@@ -479,6 +479,8 @@
     'Alana geç: {0}': 'Switch to space: {0}',
     '{0} sekme uyutuldu': '{0} tabs put to sleep',
     Kişisel: 'Personal',
+    'Geçiş anahtarı (Windows Hello) istemleri': 'Passkey (Windows Hello) prompts',
+    'Kapalıyken siteler şifre yerine Windows Güvenliği PIN penceresini açamaz. Yeniden başlatma gerekir.': 'When off, sites cannot open the Windows Security PIN dialog instead of asking for your password. Needs a restart.',
     'Yalnızca simgeler görünür. Kenar çubuğunun kenarını sola doğru çekerek de daraltabilirsiniz.': 'Only icons are shown. You can also collapse it by dragging the sidebar edge to the left.',
     'Kenar çubuğunu gizle / göster (Ctrl+Shift+S)': 'Hide / show sidebar (Ctrl+Shift+S)',
     'Bağlantıyı kopyala (Ctrl+Shift+C)': 'Copy link (Ctrl+Shift+C)',

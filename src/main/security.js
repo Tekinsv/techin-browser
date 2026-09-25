@@ -15,12 +15,6 @@ function isGoogleSignIn(url) {
   return host === 'accounts.google.com' || host === 'accounts.youtube.com' || /^accounts\.google\.[a-z.]{2,6}$/.test(host);
 }
 
-/** Page-level user agent (navigator.userAgent) must match the header on sign-in pages. */
-function applySigninUserAgent(ctl, wc, url) {
-  if (!wc || wc.isDestroyed()) return;
-  const want = isGoogleSignIn(url) ? SIGNIN_USER_AGENT : ctl.userAgent;
-  if (wc.getUserAgent() !== want) wc.setUserAgent(want);
-}
 
 function requestOrigin(url) {
   return originOf(url);
@@ -124,7 +118,8 @@ function installRequestPipeline(ses, ctl) {
     }
   });
 
-  ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (details, callback) => {
+  // Only documents need response-header work (adblock CSP rules); subresources skip the main thread.
+  ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'], types: ['mainFrame', 'subFrame'] }, (details, callback) => {
     try {
       const s = ctl.settings.data;
       if (!s.adblock || !protection.blocker) return callback({});
@@ -137,11 +132,13 @@ function installRequestPipeline(ses, ctl) {
     }
   });
 
-  ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'] }, (details, callback) => {
+  // Documents (GPC) and XHR/fetch (Google sign-in) only; images, scripts etc. skip the main thread.
+  ses.webRequest.onBeforeSendHeaders({ urls: ['<all_urls>'], types: ['mainFrame', 'subFrame', 'xhr'] }, (details, callback) => {
     const signin = isGoogleSignIn(details.url);
-    if (!ctl.settings.data.gpc && !signin) return callback({});
+    const gpc = ctl.settings.data.gpc && details.resourceType !== 'xhr';
+    if (!gpc && !signin) return callback({});
     const requestHeaders = { ...details.requestHeaders };
-    if (ctl.settings.data.gpc) requestHeaders['Sec-GPC'] = '1';
+    if (gpc) requestHeaders['Sec-GPC'] = '1';
     if (signin) {
       // Google blocks sign-in from Chromium-based embedded browsers; on its
       // sign-in pages only, we present ourselves as Firefox (like Min Browser).
@@ -165,11 +162,7 @@ function hardenSession(ses, ctl, { incognito = false } = {}) {
     ses.setSSLConfig({ minVersion: 'tls1.2' });
   } catch {}
   ses.setSpellCheckerEnabled(ctl.settings.data.spellcheck);
-  // Only observes certificates for the site-info panel; -3 keeps Chromium's own verdict.
-  ses.setCertificateVerifyProc((req, cb) => {
-    ctl.noteCert(req);
-    cb(-3);
-  });
+
 }
 
 function installAppSecurity(ctl) {
@@ -213,4 +206,4 @@ function installAppSecurity(ctl) {
   });
 }
 
-module.exports = { hardenSession, installAppSecurity, isGoogleSignIn, applySigninUserAgent, SIGNIN_USER_AGENT };
+module.exports = { hardenSession, installAppSecurity, isGoogleSignIn, SIGNIN_USER_AGENT };

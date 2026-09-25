@@ -6,7 +6,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const electron = require('electron');
-const { app, session, nativeTheme, desktopCapturer, dialog, shell, protocol } = electron;
+const { app, session, nativeTheme, desktopCapturer, dialog, shell, protocol, crashReporter } = electron;
 
 // ------------------------------------------------------------ profile location
 // Must run before anything reads userData. A location.json in the default
@@ -71,6 +71,23 @@ const { SEARCH_ENGINES, buildSearchUrl, originOf, normalizeInput, safeURL } = re
 const i18n = require('../shared/i18n');
 
 const USER_DATA = app.getPath('userData');
+
+// Crash dumps stay on this computer (userData\Crashpad); nothing is uploaded.
+try {
+  crashReporter.start({ uploadToServer: false });
+} catch {}
+const LOG_FILE = path.join(USER_DATA, 'logs', 'main.log');
+function logLine(...parts) {
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 1024 * 1024) fs.renameSync(LOG_FILE, LOG_FILE + '.old');
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${parts.map(String).join(' ')}\n`);
+  } catch {}
+}
+process.on('uncaughtException', (err) => logLine('uncaughtException', err && err.stack ? err.stack : err));
+process.on('unhandledRejection', (err) => logLine('unhandledRejection', err && err.stack ? err.stack : err));
+app.on('child-process-gone', (_e, d) => logLine('child-process-gone', d.type, d.reason, d.exitCode, d.name || ''));
+app.on('render-process-gone', (_e, wc, d) => logLine('render-process-gone', d.reason, d.exitCode, wc && !wc.isDestroyed() ? wc.getURL().slice(0, 200) : ''));
 const SELFTEST = process.argv.includes('--selftest');
 
 // ------------------------------------------------------------ early settings & switches
@@ -82,11 +99,9 @@ function applySwitches(s) {
   // Windows 11 style thin overlay scrollbars, like Chrome/Edge.
   const enable = ['ParallelDownloading', 'FluentScrollbar', 'FluentOverlayScrollbar'];
   const disable = [];
-  if (s.smoothScroll === 'fluid') {
-    // Edge/Firefox-like momentum scrolling with percentage-based wheel steps.
-    cl.appendSwitch('enable-smooth-scrolling');
-    enable.push('ImpulseScrollAnimations', 'WindowsScrollingPersonality');
-  } else if (s.smoothScroll === 'standard') {
+  // 'fluid' = Firefox-like wheel animation done by src/preload/page.js; Chromium's own
+  // smooth scrolling stays on for keyboard and scrollbar.
+  if (s.smoothScroll === 'fluid' || s.smoothScroll === 'standard') {
     cl.appendSwitch('enable-smooth-scrolling');
   } else {
     cl.appendSwitch('disable-smooth-scrolling');
@@ -413,15 +428,16 @@ class Controller {
   saveSessionSoon() {
     if (this.sessionFrozen || SELFTEST) return;
     clearTimeout(this._sessTimer);
-    this._sessTimer = setTimeout(() => this.saveSessionNow(), 1500);
+    this._sessTimer = setTimeout(() => this.saveSessionNow(false), 3000);
   }
 
-  saveSessionNow() {
+  saveSessionNow(sync = true) {
     clearTimeout(this._sessTimer);
     if (this.sessionFrozen || SELFTEST) return;
     const wins = [...this.windows].filter((w) => !w.incognito && !w.win.isDestroyed());
     this.sessionStore.data = { windows: wins.map((w) => w.serialize()) };
-    this.sessionStore.saveNow();
+    if (sync) this.sessionStore.saveNow();
+    else this.sessionStore.writeAsync();
   }
 
   // ------------------------------------------------------------ tabs registry

@@ -24,6 +24,7 @@ const SCHEMA = {
   malwareProtection: { type: 'bool', def: true },
   httpsOnly: { type: 'bool', def: true },
   gpc: { type: 'bool', def: true },
+  passkeys: { type: 'bool', def: false },
   clearOnExit: { type: 'bool', def: false },
   tabSleepMinutes: { type: 'enum', values: [0, 5, 15, 30, 60, 120], def: 15 },
   memorySaver: { type: 'bool', def: true },
@@ -38,7 +39,7 @@ const SCHEMA = {
 };
 
 // Changing these only takes effect after a restart (Chromium command-line switches).
-const RESTART_KEYS = new Set(['smoothScroll', 'gpuRaster', 'memorySaver']);
+const RESTART_KEYS = new Set(['smoothScroll', 'gpuRaster', 'memorySaver', 'passkeys']);
 
 function sanitizeValue(spec, value) {
   switch (spec.type) {

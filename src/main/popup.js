@@ -4,7 +4,6 @@
 // so a popup can't pretend to be another site.
 const { BaseWindow, WebContentsView, screen } = require('electron');
 const { isNavigable, isOpenableFromPage, displayHost } = require('./url');
-const { applySigninUserAgent } = require('./security');
 
 function parseFeatures(features = '') {
   const out = {};
@@ -56,10 +55,6 @@ function openPopup(ctl, parentWin, webContents, details) {
     bw.setTitle(host ? `${host}${title && title !== host ? ' — ' + title : ''}` : title || 'Techin Browser');
   };
   wc.on('page-title-updated', setTitle);
-  // Sign-in popups need the same user agent handling as tabs.
-  applySigninUserAgent(ctl, wc, details.url);
-  wc.on('did-start-navigation', (e) => e.isMainFrame && !e.isSameDocument && applySigninUserAgent(ctl, wc, e.url));
-  wc.on('did-redirect-navigation', (e) => e.isMainFrame && applySigninUserAgent(ctl, wc, e.url));
   wc.on('did-navigate', setTitle);
   wc.on('will-navigate', (e) => {
     if (!isNavigable(e.url)) e.preventDefault();
