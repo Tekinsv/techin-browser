@@ -6,7 +6,7 @@
 // 2) Optional: hide WebAuthn so sites don't pop up the Windows passkey dialog.
 // 3) Optional: Firefox-like smooth mouse-wheel scrolling, incl. snap feeds
 //    (YouTube Shorts, Instagram Reels) that slide smoothly to the next item.
-const { contextBridge } = require('electron');
+const { contextBridge, webFrame } = require('electron');
 
 const argv = (typeof process !== 'undefined' && process.argv) || [];
 const FLAG_NO_PASSKEYS = argv.includes('--techin-no-passkeys');
@@ -58,6 +58,15 @@ if (FLAG_NO_PASSKEYS) {
 }
 
 // ------------------------------------------------------------ 3) smooth wheel
+// YouTube Shorts declares a snapping feed but gives the videos no snap points,
+// so Chromium only nudges it and YouTube then jumps. With snap points, Chromium's
+// compositor itself slides to the next video - smooth even while YouTube is busy.
+if (FLAG_SMOOTH && /(^|\.)youtube\.com$/.test(location.hostname)) {
+  try {
+    webFrame.insertCSS('#shorts-container > :not(#cinematic-shorts-scrim) { scroll-snap-align: start; scroll-snap-stop: always; }');
+  } catch {}
+}
+
 if (FLAG_SMOOTH) {
   const DURATION = 360; // ms per wheel notch, like Firefox
   const SNAP_DURATION = 460; // one Short/Reel slides in
@@ -138,10 +147,33 @@ if (FLAG_SMOOTH) {
     if (!a) return;
     // Advance by at most ~1.5 frames per callback: if the page's main thread was
     // busy (e.g. YouTube loading the next video) the slide pauses instead of jumping.
-    a.elapsed += a.last ? Math.min(now - a.last, 25) : 0;
+    const cur = getTop(a.el);
+    a.last = a.last || now;
+    if (a.lastSet !== undefined && Math.abs(cur - a.lastSet) > 1) a.hold = true;
+    if (a.hold) {
+      // The page keeps pulling the scroller back (YouTube Shorts holds it while it
+      // switches videos). Only probe with 1px until it lets go, then slide from there.
+      if (a.probe !== undefined && Math.abs(cur - a.probe) <= 0.5) {
+        a.hold = false;
+        a.probe = undefined;
+        a.from = cur;
+        a.elapsed = 0;
+      } else {
+        a.probe = cur + (a.to > cur ? 1 : -1);
+        setTop(a.el, a.probe);
+        a.lastSet = undefined;
+        a.last = now;
+        a.raf = requestAnimationFrame(run);
+        return;
+      }
+    } else {
+      a.elapsed += Math.min(now - a.last, 17);
+    }
     a.last = now;
     const t = Math.min(1, a.elapsed / a.dur);
-    setTop(a.el, a.from + (a.to - a.from) * easeOut(t));
+    const y = a.from + (a.to - a.from) * easeOut(t);
+    setTop(a.el, y);
+    a.lastSet = Math.round(y);
     if (t < 1) {
       a.raf = requestAnimationFrame(run);
     } else {
@@ -205,6 +237,8 @@ if (FLAG_SMOOTH) {
         const base = anim && anim.el === el ? anim.to : getTop(el);
 
         const pts = snapPoints(el);
+        // Real snap points: Chromium snaps on its compositor thread (never stalls). Let it.
+        if (pts.length > 1) return;
         if (dy > 0) to = pts.find((p) => p > base + 2);
         else to = [...pts].reverse().find((p) => p < base - 2);
         if (to === undefined) {

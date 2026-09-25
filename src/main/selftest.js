@@ -321,6 +321,21 @@ async function run(ctl) {
       tab.load('http://example.com/');
       await loaded(tab, 20000);
       ok('HTTP adres otomatik HTTPS’e yükseltildi', tab.url.startsWith('https://example.com'), tab.url);
+      // --- YouTube with the ad blocker on: Home -> Shorts must play (regression: gray screen)
+      {
+        const yt = w.createTab({ url: 'https://www.youtube.com/' });
+        const ytErrs = [];
+        yt.wc.on('console-message', (e, l, m) => {
+          const msg = String(e.message ?? m);
+          if (/JSONPath|Maximum call stack/.test(msg)) ytErrs.push(msg.slice(0, 100));
+        });
+        await sleep(7000);
+        await yt.wc.executeJavaScript("(() => { const a = [...document.querySelectorAll('ytd-guide-entry-renderer a, ytd-mini-guide-entry-renderer a')].find((x) => /shorts/i.test(x.getAttribute('href') || '')); if (a) a.click(); })()", true).catch(() => {});
+        const vid = await waitFor(() => yt.wc.executeJavaScript("(() => { const v = document.querySelector('ytd-shorts video'); return !!v && v.readyState > 2 && location.pathname.startsWith('/shorts'); })()"), 15000, 500);
+        ok('Reklam engelleyici açıkken YouTube Shorts açılıp oynuyor (gri ekran yok)', vid && !ytErrs.length, ytErrs.join(' | ') || yt.url);
+        yt.close({ force: true });
+        w.activateTab(tab.id);
+      }
       // --- Google sign-in: presented as Firefox only on accounts.google.com
       tab.load('https://accounts.google.com/');
       await loaded(tab, 20000);

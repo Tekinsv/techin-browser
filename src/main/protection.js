@@ -7,6 +7,7 @@ const { net, ipcMain } = require('electron');
 const { ElectronBlocker, adsAndTrackingLists, fullLists, fromElectronDetails } = require('@ghostery/adblocker-electron');
 const PRELOAD_PATH = require.resolve('@ghostery/adblocker-electron-preload');
 const { hostOf } = require('./url');
+const { parse: parseDomain } = require('tldts');
 const { parseHostsList } = require('./policy');
 
 const DAY = 86400000;
@@ -40,6 +41,7 @@ class Protection {
     this.sessions = new Set();
     this.status = { adblock: 'loading', threats: 'loading', rules: 0 };
     fs.mkdirSync(dir, { recursive: true });
+    this.injected = new Map();
     this._registerCosmeticIpc();
   }
 
@@ -126,12 +128,62 @@ class Protection {
   }
 
   _registerCosmeticIpc() {
+    // Our own version of Ghostery's handler. The library runs scriptlets with
+    // webContents.executeJavaScript, i.e. always in the MAIN frame — once more for
+    // every iframe on the page. On YouTube that stacked the same scriptlets several
+    // times ("JSONPath already declared", "Maximum call stack size exceeded") and
+    // Shorts stayed gray. Here each frame gets its own filters, exactly once.
     ipcMain.handle('@ghostery/adblocker/inject-cosmetic-filters', (event, url, msg) => {
       const s = this.getSettings();
-      if (!s.adblock || !this.blocker || typeof url !== 'string') return undefined;
-      const top = event.sender && !event.sender.isDestroyed() ? event.sender.getURL() : url;
-      if (this.isAllowlisted(top)) return undefined;
-      return this.blocker.onInjectCosmeticFilters(event, url, msg);
+      const frame = event.senderFrame;
+      if (!s.adblock || !this.blocker || typeof url !== 'string' || !frame || msg !== undefined) return undefined;
+      const wc = event.sender;
+      if (!wc || wc.isDestroyed()) return undefined;
+      if (this.isAllowlisted(wc.getURL())) return undefined;
+      const key = `${frame.processId}:${frame.routingId}:${url}`;
+      if (this.injected.get(wc.id) === undefined) {
+        this.injected.set(wc.id, new Set());
+        wc.once('destroyed', () => this.injected.delete(wc.id));
+        // A frame that loads a new document (or reloads) must get its filters again.
+        wc.on('did-frame-navigate', (_e, _url, _code, _text, _isMain, pid, rid) => {
+          const set = this.injected.get(wc.id);
+          if (!set) return;
+          for (const k of set) if (k.startsWith(`${pid}:${rid}:`)) set.delete(k);
+        });
+      }
+      const done = this.injected.get(wc.id);
+      if (done.has(key)) return undefined;
+      done.add(key);
+      if (done.size > 500) done.clear();
+      const info = parseDomain(url);
+      let result;
+      try {
+        result = this.blocker.getCosmeticsFilters({
+          url,
+          hostname: info.hostname || '',
+          domain: info.domain || '',
+          getBaseRules: true,
+          getInjectionRules: true,
+          getExtendedRules: false,
+          getRulesFromHostname: true,
+          getRulesFromDOM: false,
+          callerContext: { frameId: frame.routingId, processId: frame.processId }
+        });
+      } catch {
+        return undefined;
+      }
+      if (!result || result.active === false) return undefined;
+      const isMain = frame === wc.mainFrame;
+      if (result.styles && result.styles.length) {
+        if (isMain) wc.insertCSS(result.styles, { cssOrigin: 'user' }).catch(() => {});
+        else {
+          const css = JSON.stringify(result.styles);
+          frame.executeJavaScript(`(() => { const s = document.createElement('style'); s.textContent = ${css}; (document.head || document.documentElement).appendChild(s); })()`).catch(() => {});
+        }
+      }
+      // Each scriptlet in its own scope: they all re-declare the same helpers.
+      for (const script of result.scripts || []) frame.executeJavaScript('(function () {\n' + script + '\n})();', true).catch(() => {});
+      return undefined;
     });
     // Watching every DOM change sends a stream of IPC to the main process on busy
     // sites (YouTube, Instagram) and makes scrolling stutter - keep it off.
