@@ -316,6 +316,26 @@ async function run(ctl) {
       ok('Widevine korumalı video gerçekten oynatıldı (lisans alındı)', played, played ? `${played.t.toFixed(1)} sn oynatıldı, ${played.w}px, mediaKeys aktif` : 'oynatılamadı');
     }
 
+    // --- a local HTML file must not read other local files (the file:// fuse
+    // stays on for castlabs VMP signing; security.js blocks fetch between files)
+    {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'techin-file-'));
+      fs.writeFileSync(path.join(dir, 'secret.txt'), 'GIZLI');
+      fs.writeFileSync(path.join(dir, 'pic.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
+      fs.writeFileSync(path.join(dir, 'a.html'), "<!doctype html><title>wait</title><img id=\"i\" src=\"pic.svg\"><script>fetch('secret.txt').then((r) => r.text()).then((t) => { document.title = 'READ:' + t; }).catch(() => { document.title = 'BLOCKED'; });</script>");
+      const ft = w.createTab({ url: require('node:url').pathToFileURL(path.join(dir, 'a.html')).href });
+      const res = await waitFor(async () => {
+        const r = await ft.wc.executeJavaScript("({ title: document.title, img: document.getElementById('i') ? document.getElementById('i').naturalWidth : 0 })").catch(() => null);
+        return r && r.title !== 'wait' && r.img ? r : null;
+      }, 6000, 150);
+      ok('Yerel HTML dosyası diğer yerel dosyaları okuyamıyor (resimler yine yükleniyor)', !!res && res.title === 'BLOCKED' && res.img === 10, JSON.stringify(res));
+      ft.close({ force: true });
+      w.activateTab(tab.id);
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {}
+    }
+
     if (NET) {
       // --- HTTPS upgrade (network)
       tab.load('http://example.com/');
@@ -411,7 +431,7 @@ async function run(ctl) {
           // down, up, down: stays within the reels Instagram shows before asking to log in
           for (const down of [true, false, true]) {
             const before = await ig.wc.executeJavaScript('location.pathname');
-            await ig.wc.executeJavaScript("window.__igT = null; (() => { const f = " + FEED + "; const k = [...f.children]; let t0 = null; let y0 = null; (function r() { const y = k[0].getBoundingClientRect().top; if (t0 === null && y0 !== null && y !== y0) t0 = performance.now(); if (y0 === null) y0 = y; if (t0 !== null && window.__igT === null && performance.now() - t0 >= 100) window.__igT = Math.round((Math.abs(y - y0) / k[0].getBoundingClientRect().height) * 100); if (t0 === null || performance.now() - t0 < 200) requestAnimationFrame(r); })(); })(); true").catch(() => {});
+            await ig.wc.executeJavaScript("window.__igT = null; (() => { const f = " + FEED + "; const fr = f.getBoundingClientRect(); let cur = document.elementFromPoint(fr.left + fr.width / 2, fr.top + fr.height / 2); while (cur && cur.parentElement !== f) cur = cur.parentElement; const k = [cur || [...f.children].sort((p, q) => Math.abs(p.getBoundingClientRect().top - fr.top) - Math.abs(q.getBoundingClientRect().top - fr.top))[0]]; let t0 = null; let y0 = null; (function r() { const y = k[0].getBoundingClientRect().top; if (t0 === null && y0 !== null && y !== y0) t0 = performance.now(); if (y0 === null) y0 = y; if (t0 !== null && window.__igT === null && performance.now() - t0 >= 100) window.__igT = Math.round((Math.abs(y - y0) / k[0].getBoundingClientRect().height) * 100); if (t0 === null || performance.now() - t0 < 200) requestAnimationFrame(r); })(); })(); true").catch(() => {});
             ig.wc.focus();
             ig.wc.sendInputEvent({ type: 'mouseWheel', x: pt.x, y: pt.y, deltaX: 0, deltaY: down ? -100 : 100, wheelTicksX: 0, wheelTicksY: down ? -1 : 1, canScroll: true, hasPreciseScrollingDeltas: false });
             const after = await waitFor(async () => {
@@ -424,7 +444,9 @@ async function run(ctl) {
           }
         }
         // Chromium's own snap creeps (~5% of the way after 100 ms of motion); the slide is ~half way.
-        const good = trail.length === 3 && trail.every((r) => r.changed && r.pctAt100ms !== null && r.pctAt100ms >= 30);
+        // A background window may skip frames and miss one measurement; every one taken must be fast.
+        const measured = trail.filter((r) => r.pctAt100ms !== null);
+        const good = trail.length === 3 && trail.every((r) => r.changed) && measured.length >= 2 && measured.every((r) => r.pctAt100ms >= 30);
         ok('Instagram Reels: tek tekerlek adımı hızlı başlayıp bir sonraki/önceki reel’e kayıyor', good, JSON.stringify(trail));
         ig.close({ force: true });
         w.activateTab(tab.id);

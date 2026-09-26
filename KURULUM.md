@@ -66,22 +66,28 @@ powershell -ExecutionPolicy Bypass -File yayinla.ps1 -Surum 1.0.2 -Notlar "Neler
 - Paketli exe'de Electron sigortaları kapalı (RunAsNode, NODE_OPTIONS, --inspect), app.asar bütünlük denetimi açık,
   çerezler Windows DPAPI ile şifreli.
 
-## Netflix / Disney+ için VMP imzası (isteğe bağlı)
+## Netflix / Disney+ için VMP imzası
 
 Widevine çalışıyor, fakat Netflix gibi büyük servisler lisansı yalnızca **üretim VMP imzası** olan tarayıcılara verir.
-Bu imza ücretsizdir ama castlabs'ta **sizin açacağınız** bir hesap gerekir:
+Bu imza ücretsizdir ama castlabs'ta **sizin açacağınız** bir hesap gerekir (bu bilgisayarda açıldı, 2026-09-26):
 
 ```
-pip install --upgrade castlabs-evs
-python -m castlabs_evs.account signup
+py -3.12 -m pip install --upgrade castlabs-evs
+py -3.12 -m castlabs_evs.account signup
 ```
 
-Sonra imzalı kurulum üretmek için:
+`yayinla.ps1` her sürümü otomatik imzalar ve imzayı doğrular (geçersizse yayın durur). Elle:
 
 ```
 set TECHIN_VMP_SIGN=1
+set PYTHON=%LOCALAPPDATA%\Programs\Python\Python312\python.exe
 npm run dist
 ```
+
+Önemli: castlabs yalnızca sabit bir sigorta (fuse) setini imzalar — `scripts/after-pack.js` tam olarak o seti
+kullanır. Tek bir sigortayı değiştirmek "Binary signature denied" hatası verir ve Netflix açılmaz.
+Bu set `GrantFileProtocolExtraPrivileges` sigortasını açık tutar; yerel dosyalar arası `fetch()` bu yüzden
+`src/main/security.js` içinde engellenir.
 
 ## Google hesabıyla giriş
 

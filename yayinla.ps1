@@ -10,6 +10,9 @@ $env:Path = "T:\Tools\node;T:\Tools\gh\bin;" + $env:Path
 $env:npm_config_cache = "T:\Tools\cache\npm"
 $env:ELECTRON_BUILDER_CACHE = "T:\Tools\cache\electron-builder"
 $env:CSC_IDENTITY_AUTO_DISCOVERY = "false"
+# Widevine VMP signature (castlabs EVS account) - Netflix/Disney+ need it.
+$env:TECHIN_VMP_SIGN = "1"
+$env:PYTHON = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
 Set-Location $PSScriptRoot
 
 if ($Surum -notmatch '^\d+\.\d+\.\d+$') { throw "Sürüm 1.2.3 biçiminde olmalı" }

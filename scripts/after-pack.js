@@ -20,8 +20,12 @@ exports.default = async function afterPack(context) {
     // Only our packaged app.asar may be loaded, and it is integrity-checked.
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
-    // file:// pages get exactly Chrome's (limited) privileges.
-    [FuseV1Options.GrantFileProtocolExtraPrivileges]: false
+    // castlabs EVS only VMP-signs this exact fuse set (wiki FAQ "Can I use
+    // @electron/fuses with the free version of ECS and EVS?"); any other wire =
+    // "Binary signature denied" = no Netflix. The file:// privileges this leaves
+    // on are cut back in security.js (no fetch() between local files).
+    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: false,
+    [FuseV1Options.GrantFileProtocolExtraPrivileges]: true
   });
   console.log('  • fuses flipped:', path.basename(exe));
 };

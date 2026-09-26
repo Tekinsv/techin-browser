@@ -84,6 +84,17 @@ function installRequestPipeline(ses, ctl) {
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
     try {
       const s = ctl.settings.data;
+      // The GrantFileProtocolExtraPrivileges fuse has to stay on (castlabs only
+      // VMP-signs a fixed fuse set, and Netflix needs that signature). It would
+      // let a local HTML file fetch() other local files; Chrome doesn't allow
+      // that, so neither do we. Plain subresources (images, scripts) still load.
+      if (details.resourceType === 'xhr' && details.url.startsWith('file:')) {
+        let from = details.referrer || '';
+        try {
+          from = (details.frame && details.frame.url) || from;
+        } catch {}
+        if (!from || from.startsWith('file:')) return callback({ cancel: true });
+      }
       if (details.resourceType === 'mainFrame') {
         const u = safeURL(details.url);
         if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) return callback({});
