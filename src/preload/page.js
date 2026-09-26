@@ -64,13 +64,102 @@ if (FLAG_NO_PASSKEYS) {
 // wheel notch = one ArrowDown/ArrowUp, at most one per slide.
 const IS_YOUTUBE = /(^|\.)youtube\.com$/.test(location.hostname);
 let ytNextAt = 0;
+const YT_MODE = (argv.find((a) => a.startsWith('--techin-yt-mode=')) || '').split('=')[1] || 'transform';
+if (IS_YOUTUBE && YT_MODE === 'snap') {
+  try {
+    webFrame.insertCSS('#shorts-container > :not(#cinematic-shorts-scrim) { scroll-snap-align: start; scroll-snap-stop: always; }');
+  } catch {}
+}
+// Firefox-like Shorts slide. Measured in a 60 fps recording, Firefox starts
+// fast and eases out (~380 ms) and never freezes, because its scrolling runs off
+// the page's main thread. Chromium can't do that for YouTube's feed, but it CAN
+// run transform animations off the main thread: slide the videos with a
+// compositor transform, then jump the feed to the next video in one go (YouTube
+// accepts that without any animation of its own) and only then let YouTube do
+// its heavy video switch, when nothing is moving anymore.
+let ytSlide = null; // { anim, inner, feed, target, start }
+function ytItemTops(feed, inner) {
+  const top = feed.getBoundingClientRect().top;
+  const cur = feed.scrollTop;
+  return [...inner.children]
+    .filter((k) => /^\d+$/.test(k.id))
+    .map((k) => Math.round(k.getBoundingClientRect().top - top + cur))
+    .sort((a, b) => a - b);
+}
+function ytTransformSlide(down) {
+  const feed = document.getElementById('shorts-container');
+  const inner = document.getElementById('shorts-inner-container');
+  if (!feed || !inner || typeof inner.animate !== 'function') return false;
+  // After arriving from another YouTube page (SPA navigation) YouTube keeps a
+  // pending "re-measure item height" flag; its first scroll handler then resets
+  // the feed to the current video instead of switching. Do that re-measure now,
+  // while nothing moves, so our final jump is taken as a real video change.
+  inMain(() => {
+    const c = document.querySelector('ytd-shorts')?.polymerController;
+    if (!c || !c.shouldUpdateItemHeight || typeof c.updateItemHeight !== 'function') return;
+    try {
+      c.updateItemHeight();
+      c.shouldUpdateItemHeight = false;
+    } catch (e) {}
+  });
+  const tops = ytItemTops(feed, inner);
+  if (tops.length < 2) return false;
+  const cur = feed.scrollTop;
+  const base = ytSlide ? ytSlide.target : cur;
+  const target = down ? tops.find((p) => p > base + 20) : [...tops].reverse().find((p) => p < base - 20);
+  if (target === undefined) return !!ytSlide; // end of feed
+  const now = performance.now();
+  // One physical notch can arrive as several wheel events: extend a running
+  // slide only for a clearly separate notch, and never more than one video ahead.
+  if (ytSlide && (now - ytSlide.start < 250 || Math.abs(ytSlide.target - cur) > 20)) return true;
+  let from = 0;
+  if (ytSlide) {
+    try {
+      from = new DOMMatrixReadOnly(getComputedStyle(inner).transform).m42;
+    } catch {}
+    ytSlide.anim.cancel();
+  }
+  const anim = inner.animate([{ transform: `translateY(${from}px)` }, { transform: `translateY(${cur - target}px)` }], {
+    // Matched to Firefox in a 60 fps recording: ~45% of the way in the first 80 ms,
+    // then a long, soft ease-out.
+    duration: 420,
+    easing: 'cubic-bezier(0.25, 0.75, 0.3, 1)',
+    fill: 'forwards'
+  });
+  // Chromium re-snaps a mandatory snap container when its snapped item moves -
+  // which a transform does - and would scroll the feed back against the slide.
+  if (!feed.dataset.techinSnap) {
+    feed.dataset.techinSnap = feed.style.scrollSnapType || '-';
+    feed.dataset.techinAnchor = feed.style.overflowAnchor || '-';
+    feed.style.scrollSnapType = 'none';
+    feed.style.overflowAnchor = 'none';
+  }
+  ytSlide = { anim, inner, feed, target, start: now };
+  anim.onfinish = () => {
+    if (!ytSlide || ytSlide.anim !== anim) return;
+    ytSlide = null;
+    // Same task: remove the transform and move the feed -> no visible jump.
+    feed.scrollTo({ top: target, behavior: 'instant' });
+    anim.cancel();
+    const snap = feed.dataset.techinSnap;
+    const anchor = feed.dataset.techinAnchor;
+    feed.style.scrollSnapType = snap === '-' ? '' : snap;
+    feed.style.overflowAnchor = anchor === '-' ? '' : anchor;
+    delete feed.dataset.techinSnap;
+    delete feed.dataset.techinAnchor;
+  };
+  return true;
+}
+
 function youtubeShortsWheel(e) {
   if (!IS_YOUTUBE || !location.pathname.startsWith('/shorts')) return false;
+  if (YT_MODE === 'snap' || YT_MODE === 'native') return 'native';
   const inFeed = e.composedPath().some((n) => n instanceof Element && (n.id === 'shorts-container' || n.tagName === 'YTD-SHORTS'));
   if (!inFeed) return false;
   const a = document.activeElement;
   if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return false;
   e.preventDefault();
+  if (YT_MODE !== 'key' && ytTransformSlide(e.deltaY > 0)) return true;
   const now = performance.now();
   if (now < ytNextAt) return true;
   ytNextAt = now + 450;
@@ -253,7 +342,8 @@ if (FLAG_SMOOTH) {
       // Touchpads already scroll smoothly: only take over for notched mouse wheels.
       const notched = e.deltaMode !== 0 || (e.wheelDeltaY !== 0 && e.wheelDeltaY % 120 === 0 && Math.abs(e.deltaY) >= 40);
       if (!notched) return;
-      if (youtubeShortsWheel(e)) return;
+      const yt = youtubeShortsWheel(e);
+      if (yt) return;
       let dy = e.deltaY;
       if (e.deltaMode === 1) dy *= 40;
       else if (e.deltaMode === 2) dy *= window.innerHeight;

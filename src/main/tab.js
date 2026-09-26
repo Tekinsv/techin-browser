@@ -33,7 +33,9 @@ function tabWebPreferences(ses, settings) {
     // Read by src/preload/page.js (smooth wheel, passkey pop-ups).
     additionalArguments: [
       ...(settings.smoothScroll === 'fluid' ? ['--techin-smooth-wheel'] : []),
-      ...(settings.passkeys ? [] : ['--techin-no-passkeys'])
+      ...(settings.passkeys ? [] : ['--techin-no-passkeys']),
+      // Development experiments only (never set in the installed app).
+      ...(process.defaultApp && process.env.TECHIN_YT_MODE ? ['--techin-yt-mode=' + process.env.TECHIN_YT_MODE] : [])
     ]
   };
 }
