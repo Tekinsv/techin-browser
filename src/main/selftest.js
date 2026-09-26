@@ -400,6 +400,35 @@ async function run(ctl) {
         yt.close({ force: true });
         w.activateTab(tab.id);
       }
+      // --- Instagram Reels: one notch = one reel, slid Firefox-like (transform slide)
+      {
+        const ig = w.createTab({ url: 'https://www.instagram.com/reels/' });
+        await sleep(9000);
+        const FEED = "[...document.querySelectorAll('div')].find((n) => /y/.test(getComputedStyle(n).scrollSnapType) && n.scrollHeight > n.clientHeight + 100)";
+        const pt = await ig.wc.executeJavaScript(`(() => { const f = ${FEED}; if (!f) return null; const r = f.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`).catch(() => null);
+        const trail = [];
+        if (pt) {
+          // down, up, down: stays within the reels Instagram shows before asking to log in
+          for (const down of [true, false, true]) {
+            const before = await ig.wc.executeJavaScript('location.pathname');
+            await ig.wc.executeJavaScript("window.__igT = null; (() => { const f = " + FEED + "; const k = [...f.children]; let t0 = null; let y0 = null; (function r() { const y = k[0].getBoundingClientRect().top; if (t0 === null && y0 !== null && y !== y0) t0 = performance.now(); if (y0 === null) y0 = y; if (t0 !== null && window.__igT === null && performance.now() - t0 >= 100) window.__igT = Math.round((Math.abs(y - y0) / k[0].getBoundingClientRect().height) * 100); if (t0 === null || performance.now() - t0 < 200) requestAnimationFrame(r); })(); })(); true").catch(() => {});
+            ig.wc.focus();
+            ig.wc.sendInputEvent({ type: 'mouseWheel', x: pt.x, y: pt.y, deltaX: 0, deltaY: down ? -100 : 100, wheelTicksX: 0, wheelTicksY: down ? -1 : 1, canScroll: true, hasPreciseScrollingDeltas: false });
+            const after = await waitFor(async () => {
+              const p = await ig.wc.executeJavaScript('location.pathname').catch(() => before);
+              return p !== before ? p : null;
+            }, 3000, 100);
+            const startMs = await ig.wc.executeJavaScript('window.__igT').catch(() => null);
+            trail.push({ down, changed: !!after, pctAt100ms: startMs });
+            await sleep(900);
+          }
+        }
+        // Chromium's own snap creeps (~5% of the way after 100 ms of motion); the slide is ~half way.
+        const good = trail.length === 3 && trail.every((r) => r.changed && r.pctAt100ms !== null && r.pctAt100ms >= 30);
+        ok('Instagram Reels: tek tekerlek adımı hızlı başlayıp bir sonraki/önceki reel’e kayıyor', good, JSON.stringify(trail));
+        ig.close({ force: true });
+        w.activateTab(tab.id);
+      }
       // --- Chrome Web Store used to crash the whole browser (webstorePrivate)
       {
         const ws = w.createTab({ url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh' });

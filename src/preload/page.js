@@ -188,7 +188,67 @@ if (IS_YOUTUBE && YT_MODE === 'snap') {
 // compositor transform, then jump the feed to the next video in one go (YouTube
 // accepts that without any animation of its own) and only then let YouTube do
 // its heavy video switch, when nothing is moving anymore.
-let ytSlide = null; // { anim, inner, feed, target, start }
+// The same slide works for any full-page snap feed (Instagram Reels, TikTok...):
+// see snapFeedWheel() in the smooth-wheel section.
+let feedSlideState = null; // { anims, movers, feed, target, start, snap, anchor }
+
+function endFeedSlide(jump) {
+  const s = feedSlideState;
+  if (!s) return;
+  feedSlideState = null;
+  // Same task: move the feed and remove the transform -> no visible jump.
+  if (jump) s.feed.scrollTo({ top: s.target, behavior: 'instant' });
+  for (const a of s.anims) a.cancel();
+  s.feed.style.scrollSnapType = s.snap;
+  s.feed.style.overflowAnchor = s.anchor;
+}
+
+/**
+ * Slides `movers` (the feed's content) one item up/down with a compositor
+ * transform, then scrolls `feed` to that item. `tops` = the item scroll positions.
+ * Returns true when the wheel event was handled.
+ */
+function feedSlide(feed, movers, tops, down) {
+  if (tops.length < 2 || !movers.length || typeof movers[0].animate !== 'function') return false;
+  let s = feedSlideState;
+  if (s && s.feed !== feed) {
+    endFeedSlide(true);
+    s = null;
+  }
+  const cur = feed.scrollTop;
+  const base = s ? s.target : cur;
+  const target = down ? tops.find((p) => p > base + 20) : [...tops].reverse().find((p) => p < base - 20);
+  if (target === undefined) return !!s; // end of feed
+  const now = performance.now();
+  // One physical notch can arrive as several wheel events: extend a running
+  // slide only for a clearly separate notch, and never more than one item ahead.
+  if (s && (now - s.start < 250 || Math.abs(s.target - cur) > 20)) return true;
+  let from = 0;
+  if (s) {
+    try {
+      from = new DOMMatrixReadOnly(getComputedStyle(s.movers[0]).transform).m42;
+    } catch {}
+    for (const a of s.anims) a.cancel();
+  }
+  const frames = [{ transform: `translateY(${from}px)` }, { transform: `translateY(${cur - target}px)` }];
+  // Matched to Firefox in a 60 fps recording: ~45% of the way in the first 80 ms,
+  // then a long, soft ease-out.
+  const timing = { duration: 420, easing: 'cubic-bezier(0.25, 0.75, 0.3, 1)', fill: 'forwards' };
+  const anims = movers.map((m) => m.animate(frames, timing));
+  const next = { anims, movers, feed, target, start: now, snap: s ? s.snap : feed.style.scrollSnapType, anchor: s ? s.anchor : feed.style.overflowAnchor };
+  if (!s) {
+    // Chromium re-snaps a mandatory snap container when its snapped item moves -
+    // which a transform does - and would scroll the feed back against the slide.
+    feed.style.scrollSnapType = 'none';
+    feed.style.overflowAnchor = 'none';
+  }
+  feedSlideState = next;
+  anims[0].onfinish = () => {
+    if (feedSlideState === next) endFeedSlide(true);
+  };
+  return true;
+}
+
 function ytItemTops(feed, inner) {
   const top = feed.getBoundingClientRect().top;
   const cur = feed.scrollTop;
@@ -213,53 +273,7 @@ function ytTransformSlide(down) {
       c.shouldUpdateItemHeight = false;
     } catch (e) {}
   });
-  const tops = ytItemTops(feed, inner);
-  if (tops.length < 2) return false;
-  const cur = feed.scrollTop;
-  const base = ytSlide ? ytSlide.target : cur;
-  const target = down ? tops.find((p) => p > base + 20) : [...tops].reverse().find((p) => p < base - 20);
-  if (target === undefined) return !!ytSlide; // end of feed
-  const now = performance.now();
-  // One physical notch can arrive as several wheel events: extend a running
-  // slide only for a clearly separate notch, and never more than one video ahead.
-  if (ytSlide && (now - ytSlide.start < 250 || Math.abs(ytSlide.target - cur) > 20)) return true;
-  let from = 0;
-  if (ytSlide) {
-    try {
-      from = new DOMMatrixReadOnly(getComputedStyle(inner).transform).m42;
-    } catch {}
-    ytSlide.anim.cancel();
-  }
-  const anim = inner.animate([{ transform: `translateY(${from}px)` }, { transform: `translateY(${cur - target}px)` }], {
-    // Matched to Firefox in a 60 fps recording: ~45% of the way in the first 80 ms,
-    // then a long, soft ease-out.
-    duration: 420,
-    easing: 'cubic-bezier(0.25, 0.75, 0.3, 1)',
-    fill: 'forwards'
-  });
-  // Chromium re-snaps a mandatory snap container when its snapped item moves -
-  // which a transform does - and would scroll the feed back against the slide.
-  if (!feed.dataset.techinSnap) {
-    feed.dataset.techinSnap = feed.style.scrollSnapType || '-';
-    feed.dataset.techinAnchor = feed.style.overflowAnchor || '-';
-    feed.style.scrollSnapType = 'none';
-    feed.style.overflowAnchor = 'none';
-  }
-  ytSlide = { anim, inner, feed, target, start: now };
-  anim.onfinish = () => {
-    if (!ytSlide || ytSlide.anim !== anim) return;
-    ytSlide = null;
-    // Same task: remove the transform and move the feed -> no visible jump.
-    feed.scrollTo({ top: target, behavior: 'instant' });
-    anim.cancel();
-    const snap = feed.dataset.techinSnap;
-    const anchor = feed.dataset.techinAnchor;
-    feed.style.scrollSnapType = snap === '-' ? '' : snap;
-    feed.style.overflowAnchor = anchor === '-' ? '' : anchor;
-    delete feed.dataset.techinSnap;
-    delete feed.dataset.techinAnchor;
-  };
-  return true;
+  return feedSlide(feed, [inner], ytItemTops(feed, inner), down);
 }
 
 function youtubeShortsWheel(e) {
@@ -351,8 +365,8 @@ if (FLAG_SMOOTH) {
     return st && st !== 'none' && /y|block|both/.test(st) ? st : null;
   }
 
-  /** Scroll positions the container can snap to (items up to 3 levels deep). */
-  function snapPoints(el) {
+  /** Snap items of the container (up to 3 levels deep) with their scroll position. */
+  function snapItems(el) {
     const container = isRoot(el) ? document.documentElement : el;
     const cTop = isRoot(el) ? 0 : el.getBoundingClientRect().top + el.clientTop;
     const top = getTop(el);
@@ -371,14 +385,49 @@ if (FLAG_SMOOTH) {
           let p = r.top - cTop + top;
           if (a === 'center') p -= (h - r.height) / 2;
           else if (a === 'end') p -= h - r.height;
-          out.push(Math.max(0, Math.min(maxTop(el), Math.round(p))));
+          out.push({ el: child, p: Math.max(0, Math.min(maxTop(el), Math.round(p))) });
         } else {
           next.push(...child.children);
         }
       }
       level = next;
     }
-    return [...new Set(out)].sort((a, b) => a - b);
+    return out.sort((a, b) => a.p - b.p);
+  }
+
+  /** Scroll positions the container can snap to. */
+  function snapPoints(el) {
+    return [...new Set(snapItems(el).map((i) => i.p))];
+  }
+
+  /**
+   * Full-page snap feeds (Instagram Reels, TikTok, ...): one notch slides one
+   * item with the same compositor transform as YouTube Shorts. Chromium's own
+   * wheel + snap there creeps for ~200 ms and then jumps. Returns true if handled.
+   */
+  function snapFeedWheel(el, down) {
+    if (isRoot(el)) return false;
+    const items = snapItems(el);
+    const tops = [...new Set(items.map((i) => i.p))];
+    if (tops.length < 2) return false;
+    // Only feeds of page-sized items; small snap rows (carousels, lists) stay native.
+    const gaps = tops.slice(1).map((p, i) => p - tops[i]).sort((a, b) => a - b);
+    const h = viewH(el);
+    if (gaps[Math.floor(gaps.length / 2)] < h * 0.6) return false;
+    // What to move: the feed's direct children that hold the items near the
+    // current position (a single wrapper if all items live in one).
+    const base = feedSlideState && feedSlideState.feed === el ? feedSlideState.target : el.scrollTop;
+    const movers = new Set();
+    for (const i of items) {
+      if (i.p < base - 2 * h || i.p > base + 3 * h) continue;
+      let n = i.el;
+      while (n.parentElement && n.parentElement !== el) n = n.parentElement;
+      if (n.parentElement === el) movers.add(n);
+    }
+    if (!movers.size) return false;
+    // A mover with its own transform would be overwritten by the slide: leave it native.
+    for (const m of movers) if (getComputedStyle(m).transform !== 'none' && !(feedSlideState && feedSlideState.movers.includes(m))) return false;
+    return feedSlide(el, [...movers], tops, down);
   }
 
   function run(now) {
@@ -478,8 +527,12 @@ if (FLAG_SMOOTH) {
         const base = anim && anim.el === el ? anim.to : getTop(el);
 
         const pts = snapPoints(el);
-        // Real snap points: Chromium snaps on its compositor thread (never stalls). Let it.
-        if (pts.length > 1) return;
+        if (pts.length > 1) {
+          // Page-sized feeds slide Firefox-like; other snap containers (carousels,
+          // lists) keep Chromium's own snapping.
+          if (snapFeedWheel(el, dy > 0)) e.preventDefault();
+          return;
+        }
         if (dy > 0) to = pts.find((p) => p > base + 2);
         else to = [...pts].reverse().find((p) => p < base - 2);
         if (to === undefined) {
