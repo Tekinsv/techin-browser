@@ -38,6 +38,9 @@ function startServer() {
     '/login':
       '<!doctype html><title>Login</title><form action="/welcome" method="get" style="padding:40px;display:grid;gap:10px;width:260px"><input id="u" name="email" type="email" autocomplete="username" placeholder="E-posta"><input id="p" name="pass" type="password" placeholder="Parola"><button id="go">Giriş</button></form>',
     '/welcome': '<!doctype html><title>Welcome</title><h1>Hoş geldin</h1>',
+    // Icon that arrives slowly while the page rewrites its URL (like YouTube): the tab must keep the icon.
+    '/favpage': '<!doctype html><title>Fav</title><link rel="icon" href="/fav.png"><script>setTimeout(() => history.replaceState(null, "", "/favpage?pp=1"), 60)</script><h1>icon</h1>',
+    '/favlink': '<!doctype html><title>Links</title><a id="l" href="/favpage" style="display:block;padding:40px;font-size:30px">bağlantı</a>',
     '/long': '<!doctype html><title>Long</title><style>body{margin:0;font:18px system-ui}section{height:100vh;display:grid;place-items:center;scroll-snap-align:start}html{scroll-snap-type:y mandatory}</style>' + Array.from({ length: 6 }, (_, i) => `<section style="background:hsl(${i * 60} 60% 60%)">Short ${i + 1}</section>`).join('')
   };
   const server = http.createServer((req, res) => {
@@ -64,6 +67,13 @@ function startServer() {
     }
     if (url === '/ads') {
       return res.end('<!doctype html><title>Ads</title><script src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script><img src="https://www.google-analytics.com/collect?v=1">');
+    }
+    if (url === '/fav.png') {
+      const png = require('electron').nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4, 180), { width: 16, height: 16 }).toPNG();
+      return setTimeout(() => {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(png);
+      }, 400);
     }
     if (url === '/favicon.ico') {
       res.writeHead(404);
@@ -377,8 +387,12 @@ async function run(ctl) {
     // --- New tab: command bar, start page or home page (setting)
     {
       ctl.setSetting('newTabPage', 'start');
-      w.newTab();
-      const startOk = w.activeTabId === null && !w.modal;
+      const nt = w.newTab();
+      await sleep(200);
+      const startOk = !!nt && w.activeTabId === nt.id && nt.blankStart && !w.shownViews.includes(nt.view) && !w.modal && (await w.uiView.webContents.executeJavaScript("!document.getElementById('start').classList.contains('hidden')"));
+      w.openUrl(base + '/a', { newTab: true });
+      const reused = w.activeTabId === nt.id && !nt.blankStart && (await waitFor(() => nt.url.startsWith(base + '/a'), 5000, 100));
+      nt.close({ force: true });
       ctl.setSetting('newTabPage', 'home');
       ctl.setSetting('homeUrl', base + '/b');
       const before = w.tabs.size;
@@ -391,7 +405,89 @@ async function run(ctl) {
       w.newTab();
       const palOk = w.modal && w.modal.type === 'palette';
       w.closeModal();
-      ok('Yeni sekme ayarı: başlangıç sayfası / ana sayfa / arama çubuğu', !!(startOk && homeOk && palOk), JSON.stringify({ startOk, homeOk: !!homeOk, palOk: !!palOk }));
+      ok('Yeni sekme ayarı: başlangıç sayfası (listede yeni sekme) / ana sayfa / arama çubuğu', !!(startOk && reused && homeOk && palOk), JSON.stringify({ startOk, reused: !!reused, homeOk: !!homeOk, palOk: !!palOk }));
+    }
+
+    // --- v1.0.12 fixes
+    {
+      const uiq = (code) => w.uiView.webContents.executeJavaScript(code);
+      // a link opened with the middle button (background tab) keeps its icon although the page rewrites its URL
+      const lt = w.createTab({ url: base + '/favlink' });
+      await loaded(lt, 10000);
+      await sleep(300);
+      const lp = await lt.wc.executeJavaScript("(() => { const r = document.getElementById('l').getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) }; })()");
+      const before = w.tabs.size;
+      lt.wc.focus();
+      for (const type of ['mouseDown', 'mouseUp']) {
+        lt.wc.sendInputEvent({ type, x: lp.x, y: lp.y, button: 'middle', clickCount: 1 });
+        await sleep(40);
+      }
+      const bg = await waitFor(() => w.tabs.size > before && [...w.tabs.values()].find((t) => t !== lt && t.url.includes('/favpage')), 5000, 100);
+      const icon = bg && (await waitFor(() => bg.favicon, 5000, 100));
+      ok('Orta tıkla arka planda açılan sekmede site simgesi görünüyor', !!icon && w.activeTabId === lt.id, bg ? `${bg.url} simge: ${icon ? 'var' : 'yok'}` : 'sekme açılmadı');
+      if (bg) {
+        // going on to another site (without an icon) must not keep the old site's icon
+        bg.load(base.replace('127.0.0.1', 'localhost') + '/b');
+        const moved = await waitFor(() => bg.url.includes('localhost') && bg.alive && !bg.wc.isLoading(), 5000, 100);
+        await sleep(300);
+        ok('Başka siteye geçince eski sitenin simgesi kalmıyor', !!moved && !bg.favicon, `simge: ${bg.favicon ? 'eski simge kaldı' : 'temizlendi'}`);
+        bg.close({ force: true });
+      }
+      lt.close({ force: true });
+      w.activateTab(tab.id);
+
+      // interface text size really changes the text
+      const fsOf = () => uiq("parseFloat(getComputedStyle(document.querySelector('#btn-newtab .t')).fontSize)");
+      ctl.setSetting('uiScale', 'normal');
+      await sleep(300);
+      const fsN = await fsOf();
+      ctl.setSetting('uiScale', 'large');
+      await sleep(300);
+      const fsL = await fsOf();
+      ctl.setSetting('uiScale', 'normal');
+      ok('Arayüz yazı boyutu ayarı yazıları gerçekten büyütüyor', fsL > fsN + 0.5, `${fsN}px → ${fsL}px`);
+
+      // any color for the space
+      const sp = ctl.library.space(w.activeSpaceId);
+      ctl.library.updateSpace(sp.id, { color: '#e11d48' });
+      w.scheduleState();
+      await sleep(300);
+      const g1 = await uiq("getComputedStyle(document.documentElement).getPropertyValue('--g1').trim()");
+      ctl.library.updateSpace(sp.id, { color: null });
+      w.scheduleState();
+      // #e11d48 = rgb(225, 29, 72); the browser may report it as hsl() or rgb()
+      ok('Alan rengi serbestçe seçilebiliyor (renk seçici)', /hsl\(350 |rgb\(22[4-7], (2[89]|30), 7[1-3]\)/.test(g1), g1);
+
+      // Firefox-like fullscreen transition: curtain up, switch, curtain gone, page back on top
+      const events = [];
+      const origSend = w.sendEvent.bind(w);
+      w.sendEvent = (n, d) => {
+        if (n === 'curtain') events.push(d.phase + (d.phase === 'fade' ? (d.on ? '+' : '-') : ''));
+        return origSend(n, d);
+      };
+      w.toggleFocusMode();
+      const fsOn = await waitFor(() => w.win.isFullScreen() && !w._fsBusy, 3000, 50);
+      w.toggleFocusMode();
+      const fsOff = await waitFor(() => !w.win.isFullScreen() && !w._fsBusy, 3000, 50);
+      await sleep(200);
+      w.sendEvent = origSend;
+      const seq = events.join(' ');
+      ok('Tam ekrana geçişte Firefox gibi kararma geçişi var', !!fsOn && !!fsOff && /^prep fade\+ fade-.* prep fade\+ fade- done$/.test(seq) && !w.uiOnTop && !w.curtainUp, seq);
+
+      // auto-hidden sidebar: thin edge, floats over the page on hover
+      ctl.setSetting('sidebarAutoHide', true);
+      await sleep(300);
+      const mA = w.metrics();
+      w.setSidebarPeek(true);
+      const peekOn = await waitFor(() => w.uiOnTop && w.sidebarPeek, 2000, 50);
+      await sleep(400); // slide-in animation
+      const peekUi = await uiq("document.documentElement.classList.contains('sb-peek') && getComputedStyle(document.getElementById('sidebar')).opacity === '1'");
+      w.setSidebarPeek(false);
+      await sleep(200);
+      const peekOff = !w.uiOnTop && !w.sidebarPeek;
+      ctl.setSetting('sidebarAutoHide', false);
+      await sleep(200);
+      ok('Kenar çubuğu otomatik gizleniyor, kenara gelince sayfanın üstünde açılıyor', mA.sidebar === 0 && mA.content.x >= 6 && !!peekOn && peekUi && peekOff, JSON.stringify({ x: mA.content.x, peekOn: !!peekOn, peekUi, peekOff }));
     }
 
     // --- a local HTML file must not read other local files (the file:// fuse
@@ -651,9 +747,9 @@ async function run(ctl) {
     w.openPanel('settings');
     await sleep(600);
     {
-      // Settings float as a window over a blurred snapshot of the page.
-      const st = await ux("(() => { const p = document.getElementById('panel').getBoundingClientRect(); const c = document.getElementById('content').getBoundingClientRect(); return { imgs: document.querySelectorAll('#panelbg img').length, bg: !document.getElementById('panelbg').classList.contains('hidden'), inset: Math.round(p.left - c.left), w: Math.round(p.width), cw: Math.round(c.width) }; })()");
-      ok('Ayarlar ortada ayrı bir pencere, arkasında bulanık sayfa', st.bg && st.inset >= 20 && st.w < st.cw && (!pageShown || (st.imgs >= 1 && w.shownViews.length === 0)), JSON.stringify({ ...st, pageShown, views: w.shownViews.length }));
+      // Settings float as a window over the live page (dimmed), UI raised on top.
+      const st = await ux("(() => { const p = document.getElementById('panel').getBoundingClientRect(); const c = document.getElementById('content').getBoundingClientRect(); return { hole: getComputedStyle(document.getElementById('bg')).clipPath !== 'none', bg: !document.getElementById('panelbg').classList.contains('hidden'), inset: Math.round(p.left - c.left), w: Math.round(p.width), cw: Math.round(c.width) }; })()");
+      ok('Ayarlar ortada ayrı bir pencere, arkasında canlı sayfa görünüyor', st.bg && st.inset >= 20 && st.w < st.cw && (!pageShown || (st.hole && w.shownViews.length > 0 && w.uiOnTop)), JSON.stringify({ ...st, pageShown, views: w.shownViews.length, uiOnTop: w.uiOnTop }));
     }
     const sections = await ux('document.querySelectorAll(".snav button").length');
     let memRows = 0;

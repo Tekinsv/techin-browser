@@ -74,7 +74,11 @@ class Tab {
     this.spaceId = opts.spaceId || null;
     this.url = typeof opts.url === 'string' ? opts.url : 'about:blank';
     this.title = opts.title || '';
-    this.favicon = opts.favicon || null;
+    // A tab opened in the background shows the site's icon right away if we know it.
+    this.favicon = opts.favicon || this.ctl.favicons.forHost(hostOf(opts.url || '')) || null;
+    this.docSeq = 0;
+    // New tab on the start page: no web page until the user opens something in it.
+    this.blankStart = !!opts.blankStart || (this.url === 'about:blank' && !opts.navState && !opts.adoptWebContents);
     this.navState = cleanNavState(opts.navState);
     this.lastActive = opts.lastActive || Date.now();
     this.createdAt = opts.createdAt || Date.now();
@@ -146,6 +150,7 @@ class Tab {
 
   load(url) {
     if (!isNavigable(url)) return;
+    this.blankStart = false;
     this.url = url;
     this.error = null;
     if (!this.alive) {
@@ -310,6 +315,10 @@ class Tab {
       }
     });
     wc.on('did-navigate', (_e, url) => {
+      this.docSeq++;
+      // Another site: drop the old site's icon (keep one we already know for the new site).
+      if (hostOf(url) !== hostOf(this.committedUrl || '')) this.favicon = this.ctl.favicons.forHost(hostOf(url)) || (this.committedUrl ? null : this.favicon);
+      this.committedUrl = url;
       this.url = url;
       this.error = null;
       this.blocked = 0;
@@ -340,9 +349,13 @@ class Tab {
     wc.on('page-favicon-updated', (_e, favicons) => {
       const url = Array.isArray(favicons) ? favicons[0] : null;
       if (!url) return;
-      const forUrl = this.url;
+      // Same document, not the same URL string: YouTube & co. rewrite the URL
+      // (history.replaceState) right after load, which used to drop the icon.
+      const seq = this.docSeq;
+      const host = hostOf(this.url);
       this.ctl.favicons.get(url).then((data) => {
-        if (!data || this.url !== forUrl) return;
+        if (!data || this.docSeq !== seq) return;
+        this.ctl.favicons.remember(host, data);
         this.favicon = data;
         this.win.onTabMeta(this);
         this.changed();
@@ -452,6 +465,14 @@ class Tab {
       if (!isOpenableFromPage(url)) return { action: 'deny' };
       const asPopup = disposition === 'new-window';
       const background = disposition === 'background-tab';
+      if (background) {
+        // Middle-click / Ctrl+click: Chromium hands us no page to adopt here, so the
+        // tab used to stay empty (no icon, no title) until it was clicked. Open it
+        // ourselves and load it right away in the background, like Chrome.
+        const tab = this.win.addTabFromOpener(this, null, { url, background: true });
+        tab.ensureView();
+        return { action: 'deny' };
+      }
       return {
         action: 'allow',
         overrideBrowserWindowOptions: { webPreferences: tabWebPreferences(this.win.session, this.ctl.settings.data) },

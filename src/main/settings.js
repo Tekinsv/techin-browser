@@ -11,6 +11,7 @@ const SCHEMA = {
   sidebarWidth: { type: 'int', min: 180, max: 420, def: 240 },
   sidebarHidden: { type: 'bool', def: false },
   sidebarCompact: { type: 'bool', def: false },
+  sidebarAutoHide: { type: 'bool', def: false },
   contentGap: { type: 'int', min: 0, max: 16, def: 8 },
   cornerRadius: { type: 'int', min: 0, max: 18, def: 10 },
   uiScale: { type: 'enum', values: ['small', 'normal', 'large'], def: 'normal' },

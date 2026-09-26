@@ -26,8 +26,9 @@ const HANDLERS = {
     w.show();
     w.scheduleState();
   },
-  'ui.modalPainted': (ctl, w, a) => int(a.seq, 1) && w.onModalPainted(a.seq),
-  'ui.backdropPainted': (ctl, w, a) => int(a.seq, 1) && w.onBackdropPainted(a.seq),
+  'ui.overlayPainted': (ctl, w, a) => int(a.seq, 1) && w.onOverlayPainted(a.seq),
+  'ui.curtainReady': (ctl, w) => w.onCurtainReady(),
+  'sidebar.peek': (ctl, w, a) => w.setSidebarPeek(bool(a.on)),
   'window.minimize': (ctl, w) => w.win.minimize(),
   'window.maximize': (ctl, w) => w.toggleMaximize(),
   'window.close': (ctl, w) => w.win.close(),
@@ -105,12 +106,15 @@ const HANDLERS = {
   },
   'space.save': (ctl, w, a) => {
     const name = str(a.name, 40);
-    const icon = str(a.icon, 8) ?? '';
-    const hue = Number.isFinite(a.hue) ? a.hue : 214;
+    const icon = str(a.icon, 8);
+    const hue = Number.isFinite(a.hue) ? a.hue : undefined;
+    // color: '#rrggbb' = custom color, null = back to the hue presets, missing = keep
+    const color = a.color === null ? null : typeof a.color === 'string' && /^#[0-9a-f]{6}$/i.test(a.color) ? a.color : undefined;
     if (a.id) {
-      if (id(a.id)) ctl.library.updateSpace(a.id, { name: name || undefined, icon, hue });
+      // Only what was sent changes (a color click must not wipe the space's emoji).
+      if (id(a.id)) ctl.library.updateSpace(a.id, { name: name || undefined, icon: icon ?? undefined, hue, color });
     } else {
-      const sp = ctl.library.addSpace({ name: name || undefined, icon, hue });
+      const sp = ctl.library.addSpace({ name: name || undefined, icon: icon ?? '', hue: hue ?? 214 });
       if (sp) w.switchSpace(sp.id);
     }
     if (w.modal?.type === 'space') w.closeModal();

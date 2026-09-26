@@ -129,10 +129,28 @@
 
   // ------------------------------------------------------------ theme & layout
 
+  /** '#rrggbb' -> { h, s, l } (degrees / percent) and relative luminance 0..1. */
+  function hexHsl(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => v / 255);
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const d = max - min;
+    let h = 0;
+    if (d) h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+    const lin = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+    return { h: Math.round((h * 60 + 360) % 360), s: Math.round(s * 100), l: Math.round(l * 100), lum: 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b) };
+  }
+
   function applyTheme() {
-    const { mode, hue, material, scale } = S.theme;
+    const { mode, material, scale } = S.theme;
     const inc = S.win.incognito;
-    const dark = inc || mode === 'dark';
+    // A custom space color is used exactly for the frame; light or dark text follows it.
+    const custom = !inc && S.theme.color ? hexHsl(S.theme.color) : null;
+    const hue = custom ? custom.h : S.theme.hue;
+    const dark = inc || (custom ? custom.lum < 0.4 : mode === 'dark');
     root.dataset.mode = dark ? 'dark' : 'light';
     root.dataset.material = inc ? 'gradient' : material;
     root.dataset.incognito = inc ? '1' : '0';
@@ -146,6 +164,13 @@
       g2 = '#2c2042';
       accent = '#b79bff';
       fg = '#f1ecfb';
+    } else if (custom) {
+      const { s, l } = custom;
+      const a = material === 'mica' ? ' / 0.6' : '';
+      g1 = `hsl(${hue} ${s}% ${l}%${a})`;
+      g2 = `hsl(${hue} ${s}% ${Math.max(0, Math.min(100, l + (dark ? 6 : -6)))}%${a})`;
+      accent = s < 8 ? (dark ? '#e3e7ee' : '#2b3340') : `hsl(${hue} ${Math.max(s, 55)}% ${dark ? 68 : 40}%)`;
+      fg = dark ? '#eef2f8' : '#16202e';
     } else if (dark) {
       g1 = material === 'mica' ? `hsl(${hue} 30% 12% / 0.55)` : `hsl(${hue} 36% 13%)`;
       g2 = material === 'mica' ? `hsl(${h2} 34% 18% / 0.55)` : `hsl(${h2} 40% 21%)`;
@@ -162,6 +187,8 @@
     root.style.setProperty('--accent', accent);
     root.style.setProperty('--fg', fg);
     root.style.setProperty('--fs', { small: '12px', normal: '13px', large: '14.5px' }[scale] || '13px');
+    // Every font size in style.css is multiplied by --z (Settings > Interface text size).
+    root.style.setProperty('--z', String({ small: 0.92, normal: 1, large: 1.12 }[scale] || 1));
     // Panels, dialogs and the start page take their colors from the space's hue,
     // so everything reads as one design instead of a separate gray app.
     const ph = inc ? 265 : hue;
@@ -179,6 +206,7 @@
     root.classList.toggle('side-right', L.side === 'right');
     root.classList.toggle('bare', S.win.bare);
     root.classList.toggle('modal-open', !!S.modal);
+    root.classList.toggle('panel-open', !!S.panel);
     root.classList.toggle('page-visible', L.pageVisible);
     const px = (v) => `${Math.round(v)}px`;
     if (!resizing) root.style.setProperty('--sbw', px(L.sidebar));
@@ -200,6 +228,10 @@
       `path(evenodd, "M0 0H${L.W}V${L.H}H0Z M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + hh - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + hh}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + hh - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z")`
     );
     root.classList.toggle('sb-hidden', !!L.hidden);
+    root.classList.toggle('sb-auto', !!L.autoHide);
+    root.classList.toggle('sb-peek', !!L.peek);
+    root.style.setProperty('--peekw', px(L.peekWidth || 240));
+    root.style.setProperty('--edge', px(Math.max(6, L.edge || 0)));
     root.style.setProperty('--tbh', px(L.top || 40));
     // Split view: accent ring around the focused half, error page limited to that half.
     const ring = $('panefocus');
@@ -791,8 +823,8 @@
     const panel = S.panel;
     // Panels float over what's behind them (start page, error page or a blurred
     // snapshot of the web page), so those stay rendered underneath.
-    const showError = a && (a.error || a.crashed);
-    const showStart = !a;
+    const showError = a && !a.start && (a.error || a.crashed);
+    const showStart = !a || a.start;
     $('start').classList.toggle('hidden', !showStart);
     $('panel').classList.toggle('hidden', !panel);
     $('panelbg').classList.toggle('hidden', !panel);
@@ -804,25 +836,27 @@
       // Revealed passwords don't outlive the settings page.
       pwShown.clear();
       pwReload = null;
-      if ($('panelbg').firstChild) $('panelbg').replaceChildren();
     }
     if (showError) renderError();
     else errorKey = null;
   }
 
-  // Blurred snapshot of the page(s) behind a panel; the main process takes the
-  // page off screen only after we report it painted.
-  function setBackdrop(d) {
-    const c = S ? S.layout.content : { x: 0, y: 0 };
-    const imgs = d.shots.map((s) => {
-      const im = h('img', { src: s.src, alt: '' });
-      for (const [k, v] of Object.entries({ left: s.x - c.x, top: s.y - c.y, width: s.width, height: s.height })) im.style.setProperty(k, `${Math.round(v)}px`);
-      return im;
-    });
-    $('panelbg').replaceChildren(...imgs);
-    Promise.all(imgs.map((im) => im.decode().catch(() => {}))).then(() => requestAnimationFrame(() => requestAnimationFrame(() => cmd('ui.backdropPainted', { seq: d.seq }))));
-  }
-  $('panelbg').addEventListener('mousedown', (e) => e.target === $('panelbg') || e.target.tagName === 'IMG' ? cmd('panel.close') : null);
+  // ---- auto-hidden sidebar: the edge strip reveals it, leaving it hides it again
+  let peekTimer = null;
+  const peek = (on, delay) => {
+    clearTimeout(peekTimer);
+    peekTimer = setTimeout(() => {
+      if (!!(S && S.layout.peek) !== on) cmd('sidebar.peek', { on });
+    }, delay);
+  };
+  $('sb-hot').addEventListener('mouseenter', () => peek(true, 60));
+  $('sb-hot').addEventListener('mouseleave', () => clearTimeout(peekTimer));
+  $('sidebar').addEventListener('mouseenter', () => S && S.layout.peek && clearTimeout(peekTimer));
+  $('sidebar').addEventListener('mouseleave', () => S && S.layout.peek && !resizing && peek(false, 300));
+  $('content').addEventListener('mousedown', () => S && S.layout.peek && peek(false, 0));
+
+  // Clicking the dimmed page around a panel closes it.
+  $('panelbg').addEventListener('mousedown', () => cmd('panel.close'));
 
   // ---- start page
   let startBuilt = false;
@@ -1151,13 +1185,25 @@
         class: 'preset',
         title: `${hue}°`,
         style: { background: `linear-gradient(135deg, hsl(${hue} 62% 70%), hsl(${(hue + 32) % 360} 56% 55%))` },
-        onclick: () => cmd('space.save', { id: S.activeSpaceId, hue })
+        onclick: () => cmd('space.save', { id: S.activeSpaceId, hue, color: null })
       });
       b.dataset.hue = String(hue);
       presets.append(b);
     }
+    // Any color: the swatch opens the system color picker; the whole frame takes that exact color.
+    const picker = h('input', { type: 'color', value: S.theme.color || '#3b6fe0' });
+    const custom = h('label', { class: 'preset custom', title: t('Kendi rengini seç') }, picker, ico('palette'));
+    const sendColor = debounce((v) => cmd('space.save', { id: S.activeSpaceId, color: v }), 80);
+    picker.addEventListener('input', () => sendColor(picker.value));
+    presets.append(custom);
     panelSyncs.push(() => {
-      for (const b of presets.children) b.classList.toggle('on', Number(b.dataset.hue) === S.theme.hue);
+      for (const b of presets.children) {
+        if (b === custom) continue;
+        b.classList.toggle('on', !S.theme.color && Number(b.dataset.hue) === S.theme.hue);
+      }
+      custom.classList.toggle('on', !!S.theme.color);
+      custom.style.setProperty('background', S.theme.color || 'conic-gradient(from 90deg, #f43f5e, #f59e0b, #eab308, #22c55e, #06b6d4, #3b82f6, #a855f7, #f43f5e)');
+      if (S.theme.color && document.activeElement !== picker) picker.value = S.theme.color;
     });
     return [
       group(
@@ -1170,6 +1216,7 @@
       group(
         'Yerleşim',
         row('Kenar çubuğu konumu', null, seg('sidebarSide', [['left', 'Sol'], ['right', 'Sağ']])),
+        row('Kenar çubuğunu otomatik gizle', 'Kenar çubuğu gizli kalır; fareyi pencerenin kenarına götürünce sayfanın üstünde açılır, uzaklaşınca kapanır.', toggle('sidebarAutoHide')),
         row('Kompakt kenar çubuğu', 'Yalnızca simgeler görünür. Kenar çubuğunun kenarını sola doğru çekerek de daraltabilirsiniz.', toggle('sidebarCompact')),
         row('Kenar çubuğu genişliği', null, range('sidebarWidth', 200, 420)),
         row('Sayfa çevresindeki boşluk', null, range('contentGap', 0, 16)),
@@ -2176,11 +2223,11 @@
     lines.push(h('p', { text: t('Techin Browser {0} yayınlandı (şu an {1} kullanıyorsunuz).', u.version || '?', u.current || '?') }));
     if (u.notes) lines.push(h('div', { class: 'notes', text: u.notes }));
     if (u.status === 'available') {
-      lines.push(h('p', { text: t('İndirmek ister misiniz? İndirme arka planda olur, gezinmeye devam edebilirsiniz.') }));
-      lines.push(h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => closeModal() }, t('Sonra')), h('button', { class: 'btn primary', onclick: () => cmd('update.download') }, ico('download'), t('İndir'))));
+      lines.push(h('p', { text: t('Güncellensin mi? İndirme arka planda olur; bitince tarayıcı yeni sürümle kendiliğinden yeniden açılır, sekmeleriniz geri gelir.') }));
+      lines.push(h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => closeModal() }, t('Sonra')), h('button', { class: 'btn primary', onclick: () => cmd('update.download') }, ico('download'), t('Güncelle'))));
     } else if (u.status === 'downloading') {
       lines.push(h('div', { class: 'upbar' }, h('i', { style: { width: `${u.percent || 0}%` } })));
-      lines.push(h('p', { text: t('İndiriliyor… %{0}', u.percent || 0) }));
+      lines.push(h('p', { text: t('İndiriliyor… %{0} — bitince tarayıcı yeni sürümle yeniden açılacak.', u.percent || 0) }));
       lines.push(h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => closeModal() }, t('Arka planda devam et'))));
     } else if (u.status === 'ready') {
       lines.push(h('p', { text: t('Tarayıcı yeniden başlayınca güncelleme kurulur; sekmeleriniz geri gelir.') }));
@@ -2299,7 +2346,8 @@
       paint();
     });
     name.addEventListener('input', paint);
-    const save = () => cmd('space.save', { id: d.id, name: name.value.trim(), icon: emoji, hue });
+    // Moving the hue slider replaces a custom color; otherwise the custom color stays.
+    const save = () => cmd('space.save', { id: d.id, name: name.value.trim(), icon: emoji, hue, ...(hue !== d.hue ? { color: null } : {}) });
     name.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') save();
       if (e.key === 'Escape') closeModal();
@@ -2346,8 +2394,15 @@
       b.classList.remove('bounce');
       void b.offsetWidth;
       b.classList.add('bounce');
-    } else if (name === 'backdrop') {
-      setBackdrop(data);
+    } else if (name === 'curtain') {
+      // Fullscreen transition: see-through content area, then the black fades in/out.
+      if (data.phase === 'prep') {
+        root.classList.add('curtain-up');
+        requestAnimationFrame(() => requestAnimationFrame(() => cmd('ui.curtainReady')));
+      } else if (data.phase === 'fade') {
+        root.style.setProperty('--cd', data.ms + 'ms');
+        root.classList.toggle('curtain-on', !!data.on);
+      } else root.classList.remove('curtain-up', 'curtain-on');
     } else if (name === 'passwords-changed') {
       if (pwReload) pwReload();
     } else if (name === 'modal-open') {
@@ -2398,15 +2453,15 @@
     renderContent();
     renderStrip();
     renderModal();
-    // The main process keeps us below the page until the dialog and the hole over
-    // the page are actually painted (two frames = committed to the screen).
-    const seq = S.modal && S.modal.seq;
-    if (seq && seq !== paintedModalSeq) {
-      paintedModalSeq = seq;
-      requestAnimationFrame(() => requestAnimationFrame(() => cmd('ui.modalPainted', { seq })));
+    // The main process keeps us below the page until the dialog / panel and the
+    // hole over the page are actually painted (two frames = committed to the screen).
+    const seq = S.overlay;
+    if (seq && seq !== paintedOverlay) {
+      paintedOverlay = seq;
+      requestAnimationFrame(() => requestAnimationFrame(() => cmd('ui.overlayPainted', { seq })));
     }
   }
-  let paintedModalSeq = 0;
+  let paintedOverlay = 0;
 
   T.onState((state) => {
     S = state;

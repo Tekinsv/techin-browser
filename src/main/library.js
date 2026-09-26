@@ -21,6 +21,8 @@ function cleanItem(it) {
   };
 }
 
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+
 function cleanSpace(sp, i) {
   if (!sp || typeof sp !== 'object') return null;
   return {
@@ -28,6 +30,8 @@ function cleanSpace(sp, i) {
     name: typeof sp.name === 'string' && sp.name.trim() ? sp.name.trim().slice(0, 40) : `Alan ${i + 1}`,
     icon: typeof sp.icon === 'string' && sp.icon.length <= 8 ? sp.icon : '',
     hue: Number.isFinite(sp.hue) ? ((Math.round(sp.hue) % 360) + 360) % 360 : 214,
+    // Optional exact color picked by the user (overrides the hue presets).
+    color: typeof sp.color === 'string' && HEX_RE.test(sp.color) ? sp.color.toLowerCase() : null,
     pinned: Array.isArray(sp.pinned) ? sp.pinned.map(cleanItem).filter(Boolean).slice(0, 200) : []
   };
 }
@@ -144,6 +148,8 @@ class Library extends EventEmitter {
     if (typeof patch.name === 'string' && patch.name.trim()) sp.name = patch.name.trim().slice(0, 40);
     if (typeof patch.icon === 'string' && patch.icon.length <= 8) sp.icon = patch.icon;
     if (Number.isFinite(patch.hue)) sp.hue = ((Math.round(patch.hue) % 360) + 360) % 360;
+    if (patch.color === null) sp.color = null;
+    else if (typeof patch.color === 'string' && HEX_RE.test(patch.color)) sp.color = patch.color.toLowerCase();
     this.changed();
   }
 

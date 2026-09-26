@@ -521,6 +521,13 @@
     'Güncelleme yalnızca kurulu sürümde çalışır': 'Updates only work in the installed version',
     'Techin Browser güncel': 'Techin Browser is up to date',
     'Güncelleme denetlenemedi': "Couldn't check for updates",
+    'Güncellensin mi? İndirme arka planda olur; bitince tarayıcı yeni sürümle kendiliğinden yeniden açılır, sekmeleriniz geri gelir.': 'Update now? It downloads in the background; when done the browser reopens on the new version with your tabs.',
+    'İndiriliyor… %{0} — bitince tarayıcı yeni sürümle yeniden açılacak.': 'Downloading… {0}% — the browser reopens on the new version when done.',
+    'Güncelleme kuruluyor, tarayıcı yeniden açılacak…': 'Installing the update, the browser will reopen…',
+    // v1.0.12
+    'Kenar çubuğunu otomatik gizle': 'Auto-hide the sidebar',
+    'Kenar çubuğu gizli kalır; fareyi pencerenin kenarına götürünce sayfanın üstünde açılır, uzaklaşınca kapanır.': 'The sidebar stays hidden; move the mouse to the window edge to show it over the page, move away to hide it.',
+    'Kendi rengini seç': 'Pick your own color',
     // passwords, new tab, floating settings (v1.0.11)
     Parolalar: 'Passwords',
     'Ayarlar (Ctrl+,)': 'Settings (Ctrl+,)',

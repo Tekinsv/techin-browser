@@ -21,6 +21,19 @@ class Favicons {
     return this.ses;
   }
 
+  /** Last icon seen for a host (so a background tab shows it before it loads its own). */
+  remember(host, data) {
+    if (!host || !data) return;
+    this.byHost = this.byHost || new Map();
+    this.byHost.delete(host);
+    this.byHost.set(host, data);
+    if (this.byHost.size > 300) this.byHost.delete(this.byHost.keys().next().value);
+  }
+
+  forHost(host) {
+    return (host && this.byHost && this.byHost.get(host)) || null;
+  }
+
   get(url) {
     if (typeof url !== 'string' || url.length > 8192) return Promise.resolve(null);
     if (url.startsWith('data:image/')) return Promise.resolve(url.length < 120000 && !url.startsWith('data:image/svg') ? url : this._svgData(url));

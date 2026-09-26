@@ -222,12 +222,15 @@ class TechinWindow {
     if (this.htmlFullscreen || this.focusMode) {
       return { W, H, sidebar: 0, gap: 0, top: 0, radius: 0, content: { x: 0, y: 0, width: W, height: H }, bare: true };
     }
-    const sidebar = s.sidebarHidden ? 0 : s.sidebarCompact ? COMPACT_WIDTH : s.sidebarWidth;
+    // Auto-hide: no sidebar column, just a thin strip at the edge that reveals it on hover.
+    const auto = s.sidebarAutoHide && !s.sidebarHidden;
+    const sidebar = s.sidebarHidden || auto ? 0 : s.sidebarCompact ? COMPACT_WIDTH : s.sidebarWidth;
     const gap = s.contentGap;
+    const edge = auto ? Math.max(gap, 6) : gap;
     const radius = this.win.isMaximized() || this.win.isFullScreen() ? Math.min(s.cornerRadius, 8) : s.cornerRadius;
     const left = s.sidebarSide === 'left';
-    const x = left && sidebar ? sidebar : gap;
-    const width = Math.max(200, W - sidebar - (sidebar ? gap : gap * 2));
+    const x = left ? (sidebar ? sidebar : edge) : gap;
+    const width = Math.max(200, W - sidebar - (sidebar ? gap : edge + gap));
     return {
       W,
       H,
@@ -236,6 +239,9 @@ class TechinWindow {
       top: TOPBAR_HEIGHT,
       radius,
       content: { x, y: TOPBAR_HEIGHT, width, height: Math.max(150, H - TOPBAR_HEIGHT - gap) },
+      auto,
+      edge,
+      peekWidth: s.sidebarCompact ? COMPACT_WIDTH : s.sidebarWidth,
       bare: false
     };
   }
@@ -308,9 +314,10 @@ class TechinWindow {
   syncViews() {
     if (this.win.isDestroyed()) return;
     const desired = [];
-    if (!this.panel || this.panelHold) {
+    {
       for (const t of this.visibleTabs()) {
-        if (t.error || t.crashed) continue;
+        // A new tab showing the start page has no web page (the UI draws it).
+        if (t.error || t.crashed || t.blankStart) continue;
         t.ensureView();
         desired.push(t.view);
       }
@@ -327,7 +334,7 @@ class TechinWindow {
       this.uiOnTop = false;
     }
     this.shownViews = desired;
-    const wantUiTop = (!!this.modal && this.uiTopReady) || !desired.length;
+    const wantUiTop = (!!(this.modal || this.panel || this.sidebarPeek) && this.uiTopReady) || !desired.length || !!this.curtainUp;
     if (wantUiTop && !this.uiOnTop) {
       this.win.contentView.addChildView(this.uiView);
       this.uiOnTop = true;
@@ -400,7 +407,8 @@ class TechinWindow {
       refId: opts.refId,
       spaceId: opts.spaceId || this.activeSpaceId,
       openerId: opts.openerId,
-      adoptWebContents: opts.adopt
+      adoptWebContents: opts.adopt,
+      blankStart: opts.blankStart
     });
     this.tabs.set(tab.id, tab);
     if (kind === 'normal') {
@@ -741,6 +749,8 @@ class TechinWindow {
     const n = normalizeInput(text, this.searchTemplate());
     if (!n) return null;
     const tab = this.activeTab();
+    // Typing on a new tab's start page opens the site right in that tab.
+    if (newTab && tab && tab.blankStart && !background) newTab = false;
     if (!newTab && tab) {
       tab.load(n.url);
       this.activateTab(tab.id);
@@ -803,58 +813,38 @@ class TechinWindow {
 
   openPanel(name) {
     if (!['settings', 'history', 'downloads'].includes(name)) return;
-    this.closeModal();
+    this.closeModal(null, true); // the panel replaces it; the UI stays on top if it is
     const wasOpen = !!this.panel;
     this.panel = name;
-    // Panels float as a window over a blurred snapshot of the page. Keep the
-    // page on screen until the UI has painted that snapshot (no empty frame).
-    if (!wasOpen) this._holdPagesForBackdrop();
+    // Panels float as a window over the live page (dimmed), like the dialogs.
+    if (!wasOpen) this._startOverlay();
     this.syncViews();
     this.uiView.webContents.focus();
     this.sendState();
   }
 
-  _holdPagesForBackdrop() {
-    const seq = (this._backdropSeq = (this._backdropSeq || 0) + 1);
-    const panes = this.paneRects().filter((p) => p.tab.alive && p.tab.view && this.shownViews.includes(p.tab.view));
-    clearTimeout(this._backdropFallback);
-    if (!panes.length) {
-      this.panelHold = null;
-      this.sendEvent('backdrop', { seq, shots: [] });
-      return;
+  /** Auto-hidden sidebar: shown floating over the page while the mouse is on it. */
+  setSidebarPeek(on) {
+    on = !!on && !!(this._metrics || this.metrics()).auto;
+    if (on === !!this.sidebarPeek) return;
+    this.sidebarPeek = on;
+    if (on) {
+      if (!this.modal && !this.panel) this._startOverlay();
+    } else if (!this.modal && !this.panel) {
+      clearTimeout(this._overlayFallback);
+      this.uiTopReady = false;
     }
-    this.panelHold = seq;
-    this._backdropFallback = setTimeout(() => this.onBackdropPainted(seq), 400);
-    Promise.all(
-      panes.map(async (p) => {
-        try {
-          const img = await p.tab.wc.capturePage();
-          if (img.isEmpty()) return null;
-          // It gets blurred anyway: a third of the size is plenty and cheap to send.
-          const small = img.resize({ width: Math.max(1, Math.round(p.width / 3)), quality: 'good' });
-          return { x: p.x, y: p.y, width: p.width, height: p.height, src: 'data:image/jpeg;base64,' + small.toJPEG(72).toString('base64') };
-        } catch {
-          return null;
-        }
-      })
-    ).then((shots) => {
-      if (this.panelHold === seq && !this.win.isDestroyed()) this.sendEvent('backdrop', { seq, shots: shots.filter(Boolean) });
-    });
-  }
-
-  /** The UI shows the blurred snapshot: the page itself can leave the screen now. */
-  onBackdropPainted(seq) {
-    if (this.panelHold !== seq || this.win.isDestroyed()) return;
-    clearTimeout(this._backdropFallback);
-    this.panelHold = null;
     this.syncViews();
+    this.sendState();
   }
 
   closePanel() {
     if (!this.panel) return;
     this.panel = null;
-    this.panelHold = null;
-    clearTimeout(this._backdropFallback);
+    if (!this.modal && !this.sidebarPeek) {
+      clearTimeout(this._overlayFallback);
+      this.uiTopReady = false;
+    }
     this.syncViews();
     this.focusPage();
   }
@@ -863,23 +853,30 @@ class TechinWindow {
     const replacing = !!this.modal;
     if (replacing) this.closeModal(null, true);
     this.modal = modal;
-    modal._seq = this._modalSeq = (this._modalSeq || 0) + 1;
-    // Raise the UI above the page only once it has painted the dialog and the
-    // see-through hole over the page; raising first shows a frame or two of the
-    // UI's own background where the page is (a visible black flicker).
-    this.uiTopReady = replacing && this.uiOnTop;
-    clearTimeout(this._modalRaiseFallback);
-    this._modalRaiseFallback = setTimeout(() => this.onModalPainted(modal._seq), 250);
+    this._startOverlay();
     this.syncViews();
     this.uiView.webContents.focus();
     this.sendState();
     this.sendEvent('modal-open', { type: modal.type });
   }
 
-  /** The UI reports that the dialog with this sequence number is on screen. */
-  onModalPainted(seq) {
-    if (!this.modal || this.modal._seq !== seq || this.uiTopReady || this.win.isDestroyed()) return;
-    clearTimeout(this._modalRaiseFallback);
+  /**
+   * A dialog or panel is opening over the page. The UI view is raised above the
+   * page only once it has painted it and the see-through hole over the page;
+   * raising first shows a frame or two of the UI's own background (black flicker).
+   * If the UI is already on top (dialog over a panel), it simply stays there.
+   */
+  _startOverlay() {
+    const seq = (this.overlaySeq = (this.overlaySeq || 0) + 1);
+    this.uiTopReady = this.uiOnTop;
+    clearTimeout(this._overlayFallback);
+    if (!this.uiTopReady) this._overlayFallback = setTimeout(() => this.onOverlayPainted(seq), 250);
+  }
+
+  /** The UI reports that the overlay with this sequence number is on screen. */
+  onOverlayPainted(seq) {
+    if (seq !== this.overlaySeq || this.uiTopReady || !(this.modal || this.panel || this.sidebarPeek) || this.win.isDestroyed()) return;
+    clearTimeout(this._overlayFallback);
     this.uiTopReady = true;
     this.syncViews();
   }
@@ -888,14 +885,16 @@ class TechinWindow {
     const m = this.modal;
     if (!m) return;
     this.modal = null;
-    clearTimeout(this._modalRaiseFallback);
     try {
       m.onClose?.(result);
     } catch (err) {
       console.error(err);
     }
     if (replacing) return; // openModal() takes over right away, keep the UI where it is
-    this.uiTopReady = false;
+    if (!this.panel && !this.sidebarPeek) {
+      clearTimeout(this._overlayFallback);
+      this.uiTopReady = false;
+    }
     this.syncViews();
     this.focusPage();
     this.scheduleState();
@@ -903,7 +902,7 @@ class TechinWindow {
 
   openPalette(mode = 'new', text = '') {
     const tab = this.activeTab();
-    const edit = mode === 'edit' && tab;
+    const edit = mode === 'edit' && tab && !tab.blankStart;
     this.openModal({ type: 'palette', mode: edit ? 'edit' : 'new', text: edit ? tab.url : text });
   }
 
@@ -911,7 +910,12 @@ class TechinWindow {
   newTab() {
     const s = this.ctl.settings.data;
     if (s.newTabPage === 'home') return this.createTab({ url: s.homeUrl });
-    if (s.newTabPage === 'start') return this.showStart();
+    if (s.newTabPage === 'start') {
+      // A real tab in the list, showing the start page until something is opened in it.
+      const cur = this.activeTab();
+      if (cur && cur.blankStart) return cur;
+      return this.createTab({ url: 'about:blank', blankStart: true });
+    }
     return this.openPalette('new');
   }
 
@@ -1009,19 +1013,90 @@ class TechinWindow {
 
   setHtmlFullscreen(tab, on) {
     this.htmlFullscreen = on ? tab.id : null;
-    if (on && !this.win.isFullScreen()) this.win.setFullScreen(true);
-    if (!on && this.win.isFullScreen() && !this.focusMode) this.win.setFullScreen(false);
+    if (on && !this.win.isFullScreen()) this.animateFullScreen(true);
+    if (!on && this.win.isFullScreen() && !this.focusMode) this.animateFullScreen(false);
     this.layout();
   }
 
   toggleFocusMode() {
     this.focusMode = !this.focusMode;
-    this.win.setFullScreen(this.focusMode);
+    this.animateFullScreen(this.focusMode);
     this.layout();
   }
 
+  // ---- Firefox-style fullscreen transition: a black curtain fades in over the
+  // whole window, the window switches, and the curtain fades out again. Without
+  // it the jump (and the page re-laying out at the new size) is plainly visible.
+
+  // The curtain lives in the UI view (no extra process). The UI first makes the
+  // content area see-through and reports back; only then is it raised over the
+  // page (raising first would flash the UI's own background), and the black fades in.
+  async _curtainFade(on, ms) {
+    const seq = on ? (this._curtainSeq = (this._curtainSeq || 0) + 1) : this._curtainSeq;
+    if (on) {
+      await new Promise((resolve) => {
+        this._curtainReady = resolve;
+        this.sendEvent('curtain', { phase: 'prep' });
+        setTimeout(resolve, 250);
+      });
+      this._curtainReady = null;
+      this.curtainUp = true;
+      this.win.contentView.addChildView(this.uiView);
+      this.uiOnTop = true;
+    }
+    this.sendEvent('curtain', { phase: 'fade', on, ms });
+    await new Promise((r) => setTimeout(r, ms + 30));
+    if (!on && !this.win.isDestroyed()) {
+      this.curtainUp = false;
+      this.uiOnTop = true; // syncViews() puts the pages back on top where they belong
+      this.syncViews();
+      // Not if the next transition already started (fast F11 twice): it owns the curtain now.
+      setTimeout(() => this._curtainSeq === seq && !this.curtainUp && this.sendEvent('curtain', { phase: 'done' }), 50);
+    }
+  }
+
+  onCurtainReady() {
+    if (this._curtainReady) this._curtainReady();
+  }
+
+  _waitFullScreen(target) {
+    return new Promise((resolve) => {
+      if (this.win.isFullScreen() === target) return setTimeout(resolve, 60);
+      const ev = target ? 'enter-full-screen' : 'leave-full-screen';
+      const done = () => {
+        clearTimeout(timer);
+        setTimeout(resolve, 60); // let the page lay out at its new size under the curtain
+      };
+      const timer = setTimeout(() => {
+        this.win.removeListener(ev, done);
+        resolve();
+      }, 700);
+      this.win.once(ev, done);
+    });
+  }
+
+  async animateFullScreen(on) {
+    this._fsTarget = on;
+    if (this._fsBusy) return; // the running transition picks up the latest target
+    this._fsBusy = true;
+    try {
+      while (!this.win.isDestroyed() && this.win.isFullScreen() !== this._fsTarget) {
+        const target = this._fsTarget;
+        await this._curtainFade(true, target ? 150 : 110);
+        this.win.setFullScreen(target);
+        await this._waitFullScreen(target);
+        this.layout();
+        await this._curtainFade(false, 230);
+      }
+    } catch {
+      if (!this.win.isDestroyed()) this.win.setFullScreen(this._fsTarget);
+    } finally {
+      this._fsBusy = false;
+    }
+  }
+
   toggleMaximize() {
-    if (this.win.isFullScreen()) this.win.setFullScreen(false);
+    if (this.win.isFullScreen()) this.animateFullScreen(false);
     else if (this.win.isMaximized()) this.win.unmaximize();
     else this.win.maximize();
   }
@@ -1176,6 +1251,7 @@ class TechinWindow {
       muted: t.muted,
       sleeping: t.sleeping,
       crashed: !!t.crashed,
+      start: !!t.blankStart,
       active: t.id === this.activeTabId
     };
   }
@@ -1212,6 +1288,7 @@ class TechinWindow {
         id: tab.id,
         kind: tab.kind,
         refId: tab.refId,
+        start: !!tab.blankStart,
         url: tab.url,
         host: displayHost(tab.url),
         title: tab.title,
@@ -1243,7 +1320,11 @@ class TechinWindow {
         side: s.sidebarSide,
         sidebar: m.sidebar,
         compact: s.sidebarCompact,
-        hidden: s.sidebarHidden,
+        hidden: s.sidebarHidden || !!m.auto,
+        autoHide: !!m.auto,
+        edge: m.edge || 0,
+        peekWidth: m.peekWidth || 0,
+        peek: !!this.sidebarPeek,
         gap: m.gap,
         radius: m.radius,
         content: m.content,
@@ -1254,7 +1335,7 @@ class TechinWindow {
         top: m.top,
         panes: this.paneRects().map((p) => ({ tabId: p.tab.id, x: p.x, y: p.y, width: p.width, height: p.height }))
       },
-      theme: { mode: ctl.themeMode(), material: this.incognito ? 'gradient' : s.material, hue: space.hue, scale: s.uiScale },
+      theme: { mode: ctl.themeMode(), material: this.incognito ? 'gradient' : s.material, hue: space.hue, color: this.incognito ? null : space.color || null, scale: s.uiScale },
       lang: ctl.lang,
       spaces: lib.spaces.map((sp) => ({ id: sp.id, name: sp.name, icon: sp.icon, hue: sp.hue })),
       activeSpaceId: space.id,
@@ -1265,7 +1346,8 @@ class TechinWindow {
       panel: this.panel,
       find: { open: this.find.open && !!tab, text: this.find.text },
       infobar: infobar ? { id: infobar.id, type: infobar.type, origin: infobar.origin, perms: infobar.perms, url: infobar.url, host: infobar.host, username: infobar.username, mode: infobar.mode } : null,
-      modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null, seq: this.modal._seq } : null,
+      modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null } : null,
+      overlay: this.modal || this.panel || this.sidebarPeek ? this.overlaySeq : 0,
       downloads: ctl.downloads.summary(this.incognito),
       closedCount: this.closedTabs.length,
       split: this.split ? this.split.ids : null,

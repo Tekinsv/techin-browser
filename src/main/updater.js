@@ -52,6 +52,7 @@ class Updater {
     if (!this.au && !this._setup()) return;
     this.au.forceDevUpdateConfig = true;
     this.au.autoInstallOnAppQuit = false;
+    this.testFeed = true;
     this.au.setFeedURL({ provider: 'generic', url });
     this.state = { ...this.state, status: 'idle', version: null, error: null };
   }
@@ -77,6 +78,11 @@ class Updater {
     au.on('download-progress', (p) => this.set({ status: 'downloading', percent: Math.max(0, Math.min(100, Math.floor(p.percent || 0))) }));
     au.on('update-downloaded', (info) => {
       this.set({ status: 'ready', version: info.version || this.state.version, percent: 100 });
+      // The user already said "Güncelle": install and reopen right away, no second click.
+      if (this.installWhenReady && !this.testFeed) {
+        this.ctl.toast(this.ctl.t('Güncelleme kuruluyor, tarayıcı yeniden açılacak…'), 'download');
+        return setTimeout(() => this.install(), 1200);
+      }
       this.ctl.toast(this.ctl.t('Güncelleme hazır — yeniden başlatınca kurulacak'), 'download');
     });
     au.on('error', (err) => {
@@ -117,8 +123,9 @@ class Updater {
     if (w && !w.modal) w.openModal({ type: 'update' });
   }
 
-  async download() {
+  async download({ install = true } = {}) {
     if (!this.au || this.state.status !== 'available') return;
+    this.installWhenReady = install;
     this.set({ status: 'downloading', percent: 0, error: null });
     try {
       await this.au.downloadUpdate();
@@ -128,9 +135,10 @@ class Updater {
   }
 
   install() {
-    if (!this.au || this.state.status !== 'ready') return;
+    if (!this.au || this.state.status !== 'ready' || this.testFeed) return;
     this.ctl.prepareForUpdate();
-    setImmediate(() => this.au.quitAndInstall(false, true));
+    // Silent (no installer window; keeps the install folder) and start the new version.
+    setImmediate(() => this.au.quitAndInstall(true, true));
   }
 }
 
