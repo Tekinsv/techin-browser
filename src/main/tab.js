@@ -320,12 +320,14 @@ class Tab {
       this._applyZoom();
       this.ctl.recordVisit(this, url, this.title);
       this.win.onTabNavigated(this);
+      this.ctl.passwords.onSuccessHint(this);
       this.changed();
     });
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (!isMainFrame) return;
       this.url = url;
       this._syncNav();
+      this.ctl.passwords.onSuccessHint(this);
       this.ctl.recordVisit(this, url, this.title);
       this.changed();
     });

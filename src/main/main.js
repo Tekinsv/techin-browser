@@ -65,6 +65,7 @@ const { installIpc } = require('./ipc');
 const { openPopup } = require('./popup');
 const { TechinWindow } = require('./window');
 const { Updater } = require('./updater');
+const { Passwords, sanitizePasswords } = require('./passwords');
 const { ASKABLE } = require('./policy');
 const { ZOOM_STEPS } = require('./tab');
 const { SEARCH_ENGINES, buildSearchUrl, originOf, normalizeInput, safeURL } = require('./url');
@@ -187,6 +188,7 @@ class Controller {
       debounceMs: 1500
     });
     this.downloadsStore = store('downloads.json', { defaults: () => ({ items: [] }), sanitize: sanitizeDownloads });
+    this.passwords = new Passwords(this, store('passwords.json', { defaults: () => ({ items: [], never: [] }), sanitize: sanitizePasswords, debounceMs: 300 }));
     this.windows = new Set();
     this.lastFocused = null;
     this.tabsByWc = new Map();
@@ -245,6 +247,7 @@ class Controller {
     this.hardenUiSession();
     installAppSecurity(this);
     installIpc(this);
+    this.passwords.install();
     hardenSession(session.defaultSession, this);
 
     this.library.on('changed', () => this.onLibraryChanged());
@@ -403,7 +406,7 @@ class Controller {
   }
 
   flushStores() {
-    for (const s of [this.settings, this.sites, this.library.store, this.history.store, this.downloadsStore]) s.saveNow();
+    for (const s of [this.settings, this.sites, this.library.store, this.history.store, this.downloadsStore, this.passwords.store]) s.saveNow();
   }
 
   quit() {

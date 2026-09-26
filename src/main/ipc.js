@@ -27,6 +27,7 @@ const HANDLERS = {
     w.scheduleState();
   },
   'ui.modalPainted': (ctl, w, a) => int(a.seq, 1) && w.onModalPainted(a.seq),
+  'ui.backdropPainted': (ctl, w, a) => int(a.seq, 1) && w.onBackdropPainted(a.seq),
   'window.minimize': (ctl, w) => w.win.minimize(),
   'window.maximize': (ctl, w) => w.toggleMaximize(),
   'window.close': (ctl, w) => w.win.close(),
@@ -38,6 +39,7 @@ const HANDLERS = {
 
   // ---- tabs
   'tab.activate': (ctl, w, a) => id(a.tabId) && w.activateTab(a.tabId),
+  'tab.new': (ctl, w) => w.newTab(),
   'tab.close': (ctl, w, a) => id(a.tabId) && w.closeTab(a.tabId),
   'tab.mute': (ctl, w, a) => id(a.tabId) && w.tabs.get(a.tabId)?.toggleMute(),
   'tab.move': (ctl, w, a) => id(a.tabId) && int(a.index, 0, 10000) !== null && w.moveTab(a.tabId, a.index),
@@ -122,7 +124,38 @@ const HANDLERS = {
   'find.query': (ctl, w, a) => w.findQuery({ text: str(a.text, 500) || '', forward: a.forward !== false }),
   'find.close': (ctl, w) => w.closeFind(),
   'infobar.respond': (ctl, w, a) => {
-    if (str(a.id, 20) && ['allow', 'deny', 'dismiss', 'kill', 'wait'].includes(a.choice)) w.respondInfobar(a.id, a.choice);
+    if (str(a.id, 20) && ['allow', 'deny', 'dismiss', 'kill', 'wait', 'save', 'never'].includes(a.choice)) w.respondInfobar(a.id, a.choice);
+  },
+
+  // ---- passwords (UI only; pages use their own narrow channel in passwords.js)
+  'passwords.list': (ctl) => ({ ...ctl.passwords.status(), items: ctl.passwords.list() }),
+  'passwords.reveal': (ctl, w, a) => {
+    const pw = str(a.id, 40) ? ctl.passwords.reveal(a.id) : null;
+    return pw === null ? null : { password: pw };
+  },
+  'passwords.copy': (ctl, w, a) => {
+    if (str(a.id, 40) && ctl.passwords.copy(a.id)) ctl.toast(ctl.t('Parola kopyalandı (45 sn sonra panodan silinir)'), 'copy');
+  },
+  'passwords.add': (ctl, w, a) => {
+    const id = ctl.passwords.save({ origin: str(a.origin, 2000) || '', username: str(a.username, 256) ?? '', password: str(a.password, 512) || '' });
+    return { ok: !!id };
+  },
+  'passwords.update': (ctl, w, a) =>
+    str(a.id, 40) ? { ok: ctl.passwords.update(a.id, { origin: str(a.origin, 2000) ?? undefined, username: str(a.username, 256) ?? undefined, password: str(a.password, 512) || undefined }) } : { ok: false },
+  'passwords.remove': (ctl, w, a) => str(a.id, 40) && ctl.passwords.remove(a.id),
+  'passwords.never': (ctl, w, a) => str(a.origin, 2000) && ctl.passwords.setNever(a.origin, bool(a.on)),
+  'passwords.import': async (ctl, w) => {
+    const r = await dialog.showOpenDialog(w.win, { title: ctl.t('Parolaları içe aktar'), filters: [{ name: 'CSV', extensions: ['csv'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    const fs = require('node:fs');
+    if (fs.statSync(r.filePaths[0]).size > 20 * 1024 * 1024) return { error: 'size' };
+    return ctl.passwords.importCsv(fs.readFileSync(r.filePaths[0], 'utf8'));
+  },
+  'passwords.export': async (ctl, w) => {
+    const r = await dialog.showSaveDialog(w.win, { title: ctl.t('Parolaları dışa aktar'), defaultPath: 'Techin Parolalar.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (r.canceled || !r.filePath) return null;
+    require('node:fs').writeFileSync(r.filePath, ctl.passwords.exportCsv(), { mode: 0o600 });
+    return { ok: true };
   },
   'focus.page': (ctl, w) => w.focusPage(),
 

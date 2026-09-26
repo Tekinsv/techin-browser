@@ -35,6 +35,9 @@ function startServer() {
     // Google's public Widevine test stream + license proxy, played with Shaka Player.
     '/drm':
       '<!doctype html><title>DRM</title><video id="v" width="640" muted></video><pre id="log"></pre><script src="https://cdn.jsdelivr.net/npm/shaka-player@4/dist/shaka-player.compiled.js"></script><script>const log=(m)=>(document.getElementById("log").textContent+=m+"\\n");shaka.polyfill.installAll();const p=new shaka.Player();p.attach(document.getElementById("v")).then(()=>{p.configure({drm:{servers:{"com.widevine.alpha":"https://cwip-shaka-proxy.appspot.com/no_auth"}}});return p.load("https://storage.googleapis.com/shaka-demo-assets/sintel-widevine/dash.mpd")}).then(()=>log("loaded "+p.keySystem())).catch((e)=>log("ERR "+e.code));</script>',
+    '/login':
+      '<!doctype html><title>Login</title><form action="/welcome" method="get" style="padding:40px;display:grid;gap:10px;width:260px"><input id="u" name="email" type="email" autocomplete="username" placeholder="E-posta"><input id="p" name="pass" type="password" placeholder="Parola"><button id="go">Giriş</button></form>',
+    '/welcome': '<!doctype html><title>Welcome</title><h1>Hoş geldin</h1>',
     '/long': '<!doctype html><title>Long</title><style>body{margin:0;font:18px system-ui}section{height:100vh;display:grid;place-items:center;scroll-snap-align:start}html{scroll-snap-type:y mandatory}</style>' + Array.from({ length: 6 }, (_, i) => `<section style="background:hsl(${i * 60} 60% 60%)">Short ${i + 1}</section>`).join('')
   };
   const server = http.createServer((req, res) => {
@@ -77,10 +80,14 @@ function startServer() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, base: `http://127.0.0.1:${server.address().port}` })));
 }
 
+// The test window (not a Techin Browser the user may have open at the same time).
+let captureWin = null;
+
 async function capture(name) {
   try {
     const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 1600, height: 1000 } });
-    const src = sources.find((s) => s.name === 'Techin Browser');
+    const id = captureWin && !captureWin.isDestroyed() ? captureWin.getMediaSourceId() : null;
+    const src = id ? sources.find((s) => s.id === id) : null;
     if (!src) return null;
     const file = path.join(OUT_DIR, name + '.png');
     fs.writeFileSync(file, src.thumbnail.toPNG());
@@ -101,6 +108,7 @@ async function run(ctl) {
   const ok = (name, pass, info = '') => {
     results.push({ name, pass: !!pass, info: String(info ?? '') });
     console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${info ? '  — ' + info : ''}`);
+    if (process.env.TECHIN_DIAG_BOUNDS && captureWin && !captureWin.isDestroyed()) console.log('   BOUNDS', JSON.stringify(captureWin.getBounds()), 'max', captureWin.isMaximized(), 'fs', captureWin.isFullScreen(), 'min', captureWin.isMinimized());
   };
   const t0 = Date.now();
   const { server, base } = await startServer();
@@ -112,6 +120,7 @@ async function run(ctl) {
 
   try {
     const w = ctl.newWindow({});
+    captureWin = w.win;
     const uiErrors = [];
     w.uiView.webContents.on('console-message', (e, level, message) => {
       const lvl = e.level ?? level;
@@ -314,6 +323,75 @@ async function run(ctl) {
       );
       await capture('12-drm');
       ok('Widevine korumalı video gerçekten oynatıldı (lisans alındı)', played, played ? `${played.t.toFixed(1)} sn oynatıldı, ${played.w}px, mediaKeys aktif` : 'oynatılamadı');
+    }
+
+    // --- password manager: offer to save after a login, suggest + fill on click, origin-bound
+    {
+      const click = async (wc, p) => {
+        for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+          wc.sendInputEvent({ type, x: Math.round(p.x), y: Math.round(p.y), button: 'left', clickCount: 1 });
+          await sleep(40);
+        }
+      };
+      const center = (wc, sel) => wc.executeJavaScript(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      const pt = w.createTab({ url: base + '/login' });
+      await loaded(pt, 10000);
+      await sleep(300);
+      await pt.wc.executeJavaScript("document.getElementById('u').value = 'deneme@ornek.com'; document.getElementById('p').value = 'Gizli-Parola-123'; true");
+      pt.wc.focus();
+      await click(pt.wc, await center(pt.wc, '#go'));
+      const bar = await waitFor(() => w.infobars.find((b) => b.type === 'password' && b.tabId === pt.id), 6000, 100);
+      ok('Oturum açınca "Parola kaydedilsin mi?" soruluyor', !!bar && bar.username === 'deneme@ornek.com' && bar.mode === 'save', bar ? `${bar.host} / ${bar.username}` : 'çubuk çıkmadı');
+      await sleep(300);
+      await capture('17-password-save');
+      if (bar) w.respondInfobar(bar.id, 'save');
+      const item = ctl.passwords.items.find((it) => it.origin === base && it.username === 'deneme@ornek.com');
+      ok('Parola şifrelenmiş olarak kaydedildi', !!item && !item.pw.includes('Gizli-Parola') && ctl.passwords.reveal(item.id) === 'Gizli-Parola-123', item ? 'DPAPI ile şifreli' : 'kaydedilmedi');
+      // suggestion list on the login field, filled only by a real click on it
+      pt.load(base + '/login');
+      await loaded(pt, 10000);
+      await sleep(300);
+      pt.wc.focus();
+      await click(pt.wc, await center(pt.wc, '#u'));
+      const list = await waitFor(() => pt.wc.executeJavaScript("(() => { const e = document.querySelector('techin-passwords'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()"), 4000, 100);
+      ok('Giriş alanına tıklayınca kayıtlı hesap önerisi çıkıyor', !!list && list.h > 20, JSON.stringify(list));
+      await capture('18-password-suggest');
+      const leaked = await pt.wc.executeJavaScript("typeof require === 'undefined' && typeof ipcRenderer === 'undefined' && document.getElementById('p').value === ''");
+      if (list) await click(pt.wc, { x: list.x + 60, y: list.y + 44 });
+      const filled = await waitFor(() => pt.wc.executeJavaScript("document.getElementById('p').value === 'Gizli-Parola-123' && document.getElementById('u').value === 'deneme@ornek.com'"), 3000, 100);
+      ok('Öneriye tıklayınca kullanıcı adı ve parola dolduruluyor (öncesinde sayfa parolayı göremiyor)', leaked && !!filled);
+      // another origin (localhost instead of 127.0.0.1) gets nothing
+      pt.load(base.replace('127.0.0.1', 'localhost') + '/login');
+      await loaded(pt, 10000);
+      await sleep(300);
+      pt.wc.focus();
+      await click(pt.wc, await center(pt.wc, '#u'));
+      await sleep(700);
+      const other = await pt.wc.executeJavaScript("!!document.querySelector('techin-passwords')");
+      ok('Başka bir site o parolayı göremiyor (öneri çıkmıyor)', !other);
+      pt.close({ force: true });
+      w.activateTab(tab.id);
+      if (item) ctl.passwords.remove(item.id);
+    }
+
+    // --- New tab: command bar, start page or home page (setting)
+    {
+      ctl.setSetting('newTabPage', 'start');
+      w.newTab();
+      const startOk = w.activeTabId === null && !w.modal;
+      ctl.setSetting('newTabPage', 'home');
+      ctl.setSetting('homeUrl', base + '/b');
+      const before = w.tabs.size;
+      w.newTab();
+      const homeTab = w.activeTab();
+      const homeOk = w.tabs.size === before + 1 && homeTab && (await waitFor(() => homeTab.url.startsWith(base + '/b'), 5000, 100));
+      if (homeTab) homeTab.close({ force: true });
+      ctl.setSetting('newTabPage', 'palette');
+      w.activateTab(tab.id);
+      w.newTab();
+      const palOk = w.modal && w.modal.type === 'palette';
+      w.closeModal();
+      ok('Yeni sekme ayarı: başlangıç sayfası / ana sayfa / arama çubuğu', !!(startOk && homeOk && palOk), JSON.stringify({ startOk, homeOk: !!homeOk, palOk: !!palOk }));
     }
 
     // --- a local HTML file must not read other local files (the file:// fuse
@@ -569,20 +647,27 @@ async function run(ctl) {
 
     // --- UI walkthrough (clicks every settings section, types into the command bar ...)
     const ux = (code) => w.uiView.webContents.executeJavaScript(code);
+    const pageShown = w.shownViews.length > 0;
     w.openPanel('settings');
-    await sleep(400);
+    await sleep(600);
+    {
+      // Settings float as a window over a blurred snapshot of the page.
+      const st = await ux("(() => { const p = document.getElementById('panel').getBoundingClientRect(); const c = document.getElementById('content').getBoundingClientRect(); return { imgs: document.querySelectorAll('#panelbg img').length, bg: !document.getElementById('panelbg').classList.contains('hidden'), inset: Math.round(p.left - c.left), w: Math.round(p.width), cw: Math.round(c.width) }; })()");
+      ok('Ayarlar ortada ayrı bir pencere, arkasında bulanık sayfa', st.bg && st.inset >= 20 && st.w < st.cw && (!pageShown || (st.imgs >= 1 && w.shownViews.length === 0)), JSON.stringify({ ...st, pageShown, views: w.shownViews.length }));
+    }
     const sections = await ux('document.querySelectorAll(".snav button").length');
     let memRows = 0;
     for (let i = 0; i < sections; i++) {
       await ux(`document.querySelectorAll(".snav button")[${i}].click(); true`);
-      await sleep(i === 4 ? 900 : 180);
+      await sleep(i === 5 ? 900 : i === 3 ? 500 : 180);
       if (i === 2) await capture('06b-privacy');
-      if (i === 4) {
+      if (i === 3) await capture('06d-passwords');
+      if (i === 5) {
         await capture('06c-performance');
         memRows = await ux('document.querySelectorAll(".memrow").length');
       }
     }
-    ok('Tüm ayar bölümleri açıldı', sections === 8, `${sections} bölüm`);
+    ok('Tüm ayar bölümleri açıldı', sections === 9, `${sections} bölüm`);
     ok('Performans bölümü sekme belleklerini listeliyor', memRows >= 1, `${memRows} satır`);
     await ux('document.querySelectorAll(".snav button")[0].click(); true');
     await sleep(300);

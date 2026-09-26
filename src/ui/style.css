@@ -1048,3 +1048,66 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
 
 #toasts .toast { max-width: 240px; }
 
+
+/* ---------------------------------------------------------------- floating panels (settings, history, downloads)
+   A window in the middle of the content area over a blurred snapshot of the page. */
+#panelbg {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--card) 35%, transparent);
+  backdrop-filter: blur(22px) saturate(1.15);
+  animation: bg-in 0.2s ease;
+}
+#panelbg img { position: absolute; filter: blur(24px) saturate(1.15) brightness(0.7); transform: scale(1.06); }
+:root[data-mode="light"] #panelbg img { filter: blur(24px) saturate(1.1) brightness(0.96); }
+#panel {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(1040px, calc(100% - 64px));
+  height: min(840px, calc(100% - 56px));
+  flex: none;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--card);
+  border: 1px solid var(--card-line);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.42), 0 2px 8px rgba(0, 0, 0, 0.18);
+  animation: panel-in 0.24s var(--spring);
+}
+@keyframes panel-in { from { opacity: 0; transform: translate(-50%, -48%) scale(0.975); } }
+@keyframes bg-in { from { opacity: 0; } }
+
+/* ---------------------------------------------------------------- passwords */
+.pw-warn { color: var(--danger); gap: 10px; }
+.pw-tools { flex-wrap: wrap; gap: 8px; min-height: 0; }
+.pw-tools .txtin { flex: 1; min-width: 180px; }
+.pw-tools .btn .i { width: 14px; height: 14px; margin-right: 4px; }
+.pw-count { color: var(--card-fg-3); font-size: 12px; }
+.pw-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 16px; border-top: 1px solid var(--card-line); }
+.pw-row .letter { width: 28px; height: 28px; border-radius: 8px; font-size: 12px; }
+.pw-row .txt { flex: 1; min-width: 0; }
+.pw-row .txt b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-row .txt small { display: block; color: var(--card-fg-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-row .ib { color: var(--card-fg-2); }
+.pw-row .ib:hover { background: var(--surface-2); color: var(--card-fg); }
+.pw-row .ib.danger { background: var(--danger); color: #fff; }
+.pw-secret { font: 13px/1 ui-monospace, "Cascadia Mono", Consolas, monospace; color: var(--card-fg-3); letter-spacing: 1px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pw-secret.on { color: var(--card-fg); letter-spacing: 0; user-select: all; }
+.pw-empty { padding: 16px; color: var(--card-fg-3); font-size: 13px; border-top: 1px solid var(--card-line); }
+.pw-list > :first-child, .pw-never > :first-child { border-top: 1px solid var(--card-line); }
+.pw-never > :first-child { border-top: 0; }
+.pw-edit { padding: 14px 16px; border-top: 1px solid var(--card-line); background: color-mix(in srgb, var(--accent) 6%, transparent); display: flex; flex-direction: column; gap: 10px; }
+.pw-fields { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 8px; }
+.pw-pass { display: flex; gap: 4px; align-items: center; }
+.pw-pass .txtin { flex: 1; min-width: 0; }
+.pw-edit .actions { display: flex; gap: 8px; }
+.pw-err { color: var(--danger); font-size: 12px; }
+.pw-err:empty { display: none; }
+.pw-note { color: var(--card-fg-3); font-size: 12px; line-height: 1.55; padding: 4px 6px 12px; }
+.pw-note p { margin: 0 0 6px; }
+.linkbtn { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.btn.danger { background: var(--danger); color: #fff; }

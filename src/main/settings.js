@@ -18,6 +18,11 @@ const SCHEMA = {
   customSearchUrl: { type: 'string', max: 500, def: '', test: (v) => v === '' || (/^https:\/\/.+%s/.test(v)) },
   searchSuggestions: { type: 'bool', def: true },
   startup: { type: 'enum', values: ['restore', 'fresh'], def: 'restore' },
+  // What Ctrl+T / "New tab" opens: the command bar, the start page, or the home page.
+  newTabPage: { type: 'enum', values: ['palette', 'start', 'home'], def: 'palette' },
+  homeUrl: { type: 'string', max: 2000, def: 'https://www.google.com/', test: (v) => /^https?:\/\/[^\s]+$/.test(v) },
+  passwordSave: { type: 'bool', def: true },
+  passwordAutofill: { type: 'bool', def: true },
   adblock: { type: 'bool', def: true },
   adblockLevel: { type: 'enum', values: ['standard', 'strict'], def: 'standard' },
   adblockAllowlist: { type: 'hosts', def: [] },

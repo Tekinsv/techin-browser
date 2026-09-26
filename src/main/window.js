@@ -308,7 +308,7 @@ class TechinWindow {
   syncViews() {
     if (this.win.isDestroyed()) return;
     const desired = [];
-    if (!this.panel) {
+    if (!this.panel || this.panelHold) {
       for (const t of this.visibleTabs()) {
         if (t.error || t.crashed) continue;
         t.ensureView();
@@ -804,15 +804,57 @@ class TechinWindow {
   openPanel(name) {
     if (!['settings', 'history', 'downloads'].includes(name)) return;
     this.closeModal();
+    const wasOpen = !!this.panel;
     this.panel = name;
+    // Panels float as a window over a blurred snapshot of the page. Keep the
+    // page on screen until the UI has painted that snapshot (no empty frame).
+    if (!wasOpen) this._holdPagesForBackdrop();
     this.syncViews();
     this.uiView.webContents.focus();
-    this.scheduleState();
+    this.sendState();
+  }
+
+  _holdPagesForBackdrop() {
+    const seq = (this._backdropSeq = (this._backdropSeq || 0) + 1);
+    const panes = this.paneRects().filter((p) => p.tab.alive && p.tab.view && this.shownViews.includes(p.tab.view));
+    clearTimeout(this._backdropFallback);
+    if (!panes.length) {
+      this.panelHold = null;
+      this.sendEvent('backdrop', { seq, shots: [] });
+      return;
+    }
+    this.panelHold = seq;
+    this._backdropFallback = setTimeout(() => this.onBackdropPainted(seq), 400);
+    Promise.all(
+      panes.map(async (p) => {
+        try {
+          const img = await p.tab.wc.capturePage();
+          if (img.isEmpty()) return null;
+          // It gets blurred anyway: a third of the size is plenty and cheap to send.
+          const small = img.resize({ width: Math.max(1, Math.round(p.width / 3)), quality: 'good' });
+          return { x: p.x, y: p.y, width: p.width, height: p.height, src: 'data:image/jpeg;base64,' + small.toJPEG(72).toString('base64') };
+        } catch {
+          return null;
+        }
+      })
+    ).then((shots) => {
+      if (this.panelHold === seq && !this.win.isDestroyed()) this.sendEvent('backdrop', { seq, shots: shots.filter(Boolean) });
+    });
+  }
+
+  /** The UI shows the blurred snapshot: the page itself can leave the screen now. */
+  onBackdropPainted(seq) {
+    if (this.panelHold !== seq || this.win.isDestroyed()) return;
+    clearTimeout(this._backdropFallback);
+    this.panelHold = null;
+    this.syncViews();
   }
 
   closePanel() {
     if (!this.panel) return;
     this.panel = null;
+    this.panelHold = null;
+    clearTimeout(this._backdropFallback);
     this.syncViews();
     this.focusPage();
   }
@@ -863,6 +905,30 @@ class TechinWindow {
     const tab = this.activeTab();
     const edit = mode === 'edit' && tab;
     this.openModal({ type: 'palette', mode: edit ? 'edit' : 'new', text: edit ? tab.url : text });
+  }
+
+  /** Ctrl+T / "New tab": the command bar, the start page or the home page (a setting). */
+  newTab() {
+    const s = this.ctl.settings.data;
+    if (s.newTabPage === 'home') return this.createTab({ url: s.homeUrl });
+    if (s.newTabPage === 'start') return this.showStart();
+    return this.openPalette('new');
+  }
+
+  /** Shows the start page (clock, search, top sites); the tabs stay as they are. */
+  showStart() {
+    const prev = this.activeTab();
+    if (prev) {
+      prev.lastActive = Date.now();
+      if (this.find.open && prev.alive) prev.wc.stopFindInPage('clearSelection');
+    }
+    this.find = { open: false, text: '' };
+    this.closeModal();
+    this.panel = null;
+    this.activeTabId = null;
+    this.syncViews();
+    this.uiView.webContents.focus();
+    this.scheduleState();
   }
 
   openFind() {
@@ -975,7 +1041,7 @@ class TechinWindow {
     };
 
     if (ctrl && !alt) {
-      if (code === 'KeyT') return run(() => (shift ? this.reopenClosed() : this.openPalette('new')));
+      if (code === 'KeyT') return run(() => (shift ? this.reopenClosed() : this.newTab()));
       if (code === 'KeyN') return run(() => this.ctl.newWindow({ incognito: shift }));
       if (code === 'KeyL' && !shift) return run(() => this.openPalette('edit'));
       if ((code === 'KeyW' && !shift) || code === 'F4') {
@@ -1198,7 +1264,7 @@ class TechinWindow {
       active,
       panel: this.panel,
       find: { open: this.find.open && !!tab, text: this.find.text },
-      infobar: infobar ? { id: infobar.id, type: infobar.type, origin: infobar.origin, perms: infobar.perms, url: infobar.url, host: infobar.host } : null,
+      infobar: infobar ? { id: infobar.id, type: infobar.type, origin: infobar.origin, perms: infobar.perms, url: infobar.url, host: infobar.host, username: infobar.username, mode: infobar.mode } : null,
       modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null, seq: this.modal._seq } : null,
       downloads: ctl.downloads.summary(this.incognito),
       closedCount: this.closedTabs.length,

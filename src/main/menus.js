@@ -251,7 +251,7 @@ class Menus {
     const tab = win.activeTab();
     const acc = (a) => ({ accelerator: a, registerAccelerator: false });
     this.popup(win, [
-      { label: t('Yeni sekme'), ...acc('Ctrl+T'), click: () => win.openPalette('new') },
+      { label: t('Yeni sekme'), ...acc('Ctrl+T'), click: () => win.newTab() },
       { label: t('Yeni pencere'), ...acc('Ctrl+N'), click: () => this.ctl.newWindow() },
       { label: t('Yeni gizli pencere'), ...acc('Ctrl+Shift+N'), click: () => this.ctl.newWindow({ incognito: true }) },
       { label: t('Kapatılan sekmeyi geri aç'), ...acc('Ctrl+Shift+T'), enabled: win.closedTabs.length > 0, click: () => win.reopenClosed() },

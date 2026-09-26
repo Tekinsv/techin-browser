@@ -6,7 +6,8 @@
 // 2) Optional: hide WebAuthn so sites don't pop up the Windows passkey dialog.
 // 3) Optional: Firefox-like smooth mouse-wheel scrolling, incl. snap feeds
 //    (YouTube Shorts, Instagram Reels) that slide smoothly to the next item.
-const { contextBridge, webFrame } = require('electron');
+// 4) Password manager: offer to save logins, suggest saved ones on login fields.
+const { contextBridge, webFrame, ipcRenderer } = require('electron');
 
 const argv = (typeof process !== 'undefined' && process.argv) || [];
 const FLAG_NO_PASSKEYS = argv.includes('--techin-no-passkeys');
@@ -169,6 +170,222 @@ if (IS_YOUTUBE) {
       } catch (e) {}
     }
   });
+}
+
+// ------------------------------------------------------------ 4) passwords
+// Everything here runs in the isolated world: page scripts can't call
+// ipcRenderer, can't see our suggestion list (closed shadow root) and can't
+// fake a click on it (only trusted events fill). The main process decides the
+// origin from the sending frame, so a page only ever gets its own logins.
+if (/^https?:$/.test(location.protocol)) setupPasswords();
+
+function setupPasswords() {
+  const isPw = (el) => el instanceof HTMLInputElement && el.type === 'password';
+  const isTextish = (el) => el instanceof HTMLInputElement && /^(text|email|tel|)$/.test(el.type) && !el.disabled && !el.readOnly;
+  const USER_HINT = /user|e-?mail|login|account|identifier|phone|kullan|hesap|eposta/i;
+  const looksUser = (el) =>
+    isTextish(el) && (/username|email/.test(el.autocomplete || '') || el.type === 'email' || USER_HINT.test(`${el.name} ${el.id} ${el.getAttribute('aria-label') || ''} ${el.placeholder || ''}`));
+  const shown = (el) => el.isConnected && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+
+  function userFieldFor(pw) {
+    const scope = pw.form || document;
+    const inputs = [...scope.querySelectorAll('input')].filter((i) => isTextish(i) && shown(i));
+    const hinted = inputs.filter((i) => /username|email/.test(i.autocomplete || ''));
+    if (hinted.length) return hinted[0];
+    let best = null;
+    for (const i of inputs) if (i.compareDocumentPosition(pw) & Node.DOCUMENT_POSITION_FOLLOWING) best = i;
+    return best || inputs.find(looksUser) || null;
+  }
+
+  function passwordFields(scope) {
+    return [...(scope || document).querySelectorAll('input[type="password"]')].filter((p) => shown(p));
+  }
+
+  // ---- saving: remember what was submitted, the main process asks after a successful-looking login
+  let lastSent = '';
+  function capture(pw) {
+    const fields = passwordFields(pw.form).filter((p) => p.value);
+    if (!fields.length) return;
+    // Sign-up / change-password forms: the new password is the repeated one at the end.
+    let password = fields[fields.length - 1].value;
+    if (fields.length >= 2 && fields[fields.length - 1].value !== fields[fields.length - 2].value) password = fields[0].value;
+    const userEl = userFieldFor(fields[0]);
+    const username = userEl ? userEl.value.trim() : '';
+    const sig = `${username}\n${password}`;
+    if (sig === lastSent) return;
+    lastSent = sig;
+    setTimeout(() => (lastSent = ''), 3000);
+    ipcRenderer.send('techin:pw', { type: 'submit', username, password });
+    // Single-page logins don't navigate: no password field left on the page is our
+    // hint (a failed login usually re-renders the form, so a field is still there).
+    for (const ms of [800, 2000, 4500]) {
+      setTimeout(() => {
+        if (!passwordFields(document).length) ipcRenderer.send('techin:pw', { type: 'gone' });
+      }, ms);
+    }
+  }
+
+  document.addEventListener(
+    'submit',
+    (e) => {
+      const pw = e.target instanceof HTMLFormElement && passwordFields(e.target).find((p) => p.value);
+      if (pw) capture(pw);
+    },
+    true
+  );
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.isTrusted && e.key === 'Enter' && isPw(e.target) && e.target.value) capture(e.target);
+    },
+    true
+  );
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (!e.isTrusted) return;
+      const btn = e.target instanceof Element && e.target.closest('button, input[type="submit"], input[type="button"], [role="button"]');
+      if (!btn) return;
+      const pw = passwordFields(btn.form || btn.closest('form') || document).find((p) => p.value);
+      if (pw) capture(pw);
+    },
+    true
+  );
+  // Two-step logins (Google, Microsoft...): the username is typed on the page before.
+  document.addEventListener(
+    'change',
+    (e) => {
+      const el = e.target;
+      if (e.isTrusted && looksUser(el) && el.value.trim() && !passwordFields(el.form || document).length) ipcRenderer.send('techin:pw', { type: 'user', value: el.value.trim() });
+    },
+    true
+  );
+
+  // ---- filling: a small list under the focused login field, filled on a real click
+  let saved = null; // [{ id, username }] for this frame's origin
+  let asking = null;
+  let host = null;
+  let box = null;
+  let target = null;
+
+  const setValue = (el, v) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  function hide() {
+    if (host) host.remove();
+    target = null;
+  }
+
+  function place() {
+    if (!host || !target || !shown(target)) return hide();
+    const r = target.getBoundingClientRect();
+    const below = r.bottom + 4 + 180 < innerHeight || r.top < 190;
+    host.style.cssText = `all: initial; position: fixed; z-index: 2147483647; left: ${Math.round(Math.max(4, Math.min(r.left, innerWidth - 284)))}px; ${below ? `top: ${Math.round(r.bottom + 4)}px` : `bottom: ${Math.round(innerHeight - r.top + 4)}px`};`;
+  }
+
+  function build() {
+    host = document.createElement('techin-passwords');
+    const root = host.attachShadow({ mode: 'closed' });
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const style = document.createElement('style');
+    style.textContent = `
+      .box { font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; width: 280px; max-height: 176px; overflow: auto;
+        background: ${dark ? '#1f232b' : '#ffffff'}; color: ${dark ? '#e8eaf0' : '#1b1f27'}; border: 1px solid ${dark ? '#343a46' : '#dde1e8'};
+        border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.28); padding: 4px; }
+      .hd { font-size: 11px; opacity: .6; padding: 6px 10px 4px; }
+      button { all: unset; box-sizing: border-box; display: flex; gap: 10px; align-items: center; width: 100%; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+      button:hover, button.on { background: ${dark ? '#2c3340' : '#eef2f8'}; }
+      .k { width: 22px; height: 22px; flex: none; border-radius: 6px; display: grid; place-items: center; background: #3b6fe0; color: #fff; font-size: 12px; }
+      .u { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .d { opacity: .55; margin-left: auto; letter-spacing: 1px; }`;
+    box = document.createElement('div');
+    box.className = 'box';
+    root.append(style, box);
+  }
+
+  function render() {
+    box.replaceChildren();
+    const hd = document.createElement('div');
+    hd.className = 'hd';
+    hd.textContent = 'Techin · kayıtlı parolalar';
+    box.append(hd);
+    for (const s of saved) {
+      const b = document.createElement('button');
+      const k = document.createElement('span');
+      k.className = 'k';
+      k.textContent = '🔑';
+      const u = document.createElement('span');
+      u.className = 'u';
+      u.textContent = s.username || '(kullanıcı adı yok)';
+      const d = document.createElement('span');
+      d.className = 'd';
+      d.textContent = '••••••';
+      b.append(k, u, d);
+      // mousedown keeps the focus in the field; the fill itself needs a trusted click
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', (e) => {
+        if (!e.isTrusted) return;
+        fill(s.id);
+      });
+      box.append(b);
+    }
+  }
+
+  async function fill(id) {
+    const field = target;
+    hide();
+    const cred = await ipcRenderer.invoke('techin:pw-fill', id).catch(() => null);
+    if (!cred || !field || !field.isConnected) return;
+    const scope = field.form || document;
+    const pw = isPw(field) ? field : passwordFields(scope)[0];
+    const user = pw ? userFieldFor(pw) : isTextish(field) ? field : null;
+    if (user && cred.username) setValue(user, cred.username);
+    if (pw) setValue(pw, cred.password);
+  }
+
+  async function show(el) {
+    if (!saved) {
+      asking = asking || ipcRenderer.invoke('techin:pw-query').catch(() => []);
+      saved = await asking;
+      asking = null;
+    }
+    if (!saved.length || document.activeElement !== el) return;
+    if (!host) build();
+    target = el;
+    render();
+    place();
+    document.documentElement.append(host);
+  }
+
+  document.addEventListener(
+    'focusin',
+    (e) => {
+      const el = e.target;
+      if (isPw(el) || (looksUser(el) && (passwordFields(el.form || document).length || /username|email/.test(el.autocomplete || '')))) show(el);
+    },
+    true
+  );
+  document.addEventListener(
+    'focusout',
+    () =>
+      setTimeout(() => {
+        if (target && document.activeElement !== target) hide();
+      }, 150),
+    true
+  );
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key === 'Escape' && host && host.isConnected) hide();
+    },
+    true
+  );
+  // Typing means the user isn't picking a saved login.
+  document.addEventListener('input', (e) => e.isTrusted && e.target === target && hide(), true);
+  addEventListener('scroll', () => host && host.isConnected && place(), { capture: true, passive: true });
+  addEventListener('resize', () => host && host.isConnected && place(), { passive: true });
 }
 
 // ------------------------------------------------------------ 3) smooth wheel

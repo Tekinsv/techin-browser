@@ -7,6 +7,7 @@ const { fold } = require('./history');
 
 const ACTIONS = [
   { id: 'settings', title: 'Ayarlar', icon: 'settings', keys: 'ayarlar settings preferences tercihler' },
+  { id: 'passwords', title: 'Parolalar', icon: 'key', keys: 'parolalar sifreler sifre parola passwords password' },
   { id: 'history', title: 'Geçmiş', icon: 'history', keys: 'gecmis history' },
   { id: 'downloads', title: 'İndirilenler', icon: 'download', keys: 'indirilenler indirmeler downloads' },
   { id: 'incognito', title: 'Yeni gizli pencere', icon: 'incognito', keys: 'gizli incognito private ozel' },
@@ -153,6 +154,9 @@ function runAction(ctl, win, id) {
       return ctl.newWindow({ incognito: true });
     case 'newWindow':
       return ctl.newWindow();
+    case 'passwords':
+      win.openPanel('settings');
+      return win.sendEvent('settings-section', { id: 'passwords' });
     case 'clearData':
       win.openPanel('settings');
       return win.sendEvent('settings-section', { id: 'privacy' });

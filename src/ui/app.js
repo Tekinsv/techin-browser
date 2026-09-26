@@ -222,6 +222,8 @@
     setIcon($('btn-copy'), 'link');
     setIcon($('btn-siteinfo'), 'settings');
     setIcon($('btn-split'), 'split');
+    setIcon($('btn-passwords'), 'key');
+    setIcon($('btn-settings'), 'gear');
     setIcon($('btn-fwd'), 'forward');
     setIcon($('space-menu'), 'more');
     setIcon($('btn-newspace'), 'plus');
@@ -484,10 +486,18 @@
   $('btn-copy').addEventListener('click', () => cmd('tab.copyUrl'));
   $('btn-siteinfo').addEventListener('click', () => cmd('site.info'));
   $('btn-split').addEventListener('click', () => cmd('split.toggle'));
+  const openSettings = (section) => {
+    if (S && S.panel === 'settings' && settingsSection === section) return cmd('panel.close');
+    settingsSection = section;
+    panelKey = null;
+    cmd('panel.open', { name: 'settings' });
+  };
+  $('btn-passwords').addEventListener('click', () => openSettings('passwords'));
+  $('btn-settings').addEventListener('click', () => openSettings(settingsSection === 'passwords' ? 'appearance' : settingsSection));
   $('btn-appmenu').addEventListener('click', () => cmd('menu.app'));
   $('btn-sidebar').addEventListener('click', () => cmd('settings.set', { key: 'sidebarHidden', value: !S.settings.sidebarHidden }));
   $('btn-update').addEventListener('click', () => cmd('update.open'));
-  $('btn-newtab').addEventListener('click', () => cmd('palette.open', { mode: 'new' }));
+  $('btn-newtab').addEventListener('click', () => cmd('tab.new'));
   $('btn-clear').addEventListener('click', () => cmd('tabs.clearToday'));
   $('btn-downloads').addEventListener('click', () => cmd('panel.open', { name: 'downloads' }));
   $('btn-newspace').addEventListener('click', () => cmd('space.new'));
@@ -779,17 +789,40 @@
   function renderContent() {
     const a = S.active;
     const panel = S.panel;
-    const showError = !panel && a && (a.error || a.crashed);
-    const showStart = !panel && !a;
+    // Panels float over what's behind them (start page, error page or a blurred
+    // snapshot of the web page), so those stay rendered underneath.
+    const showError = a && (a.error || a.crashed);
+    const showStart = !a;
     $('start').classList.toggle('hidden', !showStart);
     $('panel').classList.toggle('hidden', !panel);
+    $('panelbg').classList.toggle('hidden', !panel);
     $('errorpage').classList.toggle('hidden', !showError);
     if (showStart) renderStart();
     if (panel) renderPanel();
-    else panelKey = null;
+    else {
+      panelKey = null;
+      // Revealed passwords don't outlive the settings page.
+      pwShown.clear();
+      pwReload = null;
+      if ($('panelbg').firstChild) $('panelbg').replaceChildren();
+    }
     if (showError) renderError();
     else errorKey = null;
   }
+
+  // Blurred snapshot of the page(s) behind a panel; the main process takes the
+  // page off screen only after we report it painted.
+  function setBackdrop(d) {
+    const c = S ? S.layout.content : { x: 0, y: 0 };
+    const imgs = d.shots.map((s) => {
+      const im = h('img', { src: s.src, alt: '' });
+      for (const [k, v] of Object.entries({ left: s.x - c.x, top: s.y - c.y, width: s.width, height: s.height })) im.style.setProperty(k, `${Math.round(v)}px`);
+      return im;
+    });
+    $('panelbg').replaceChildren(...imgs);
+    Promise.all(imgs.map((im) => im.decode().catch(() => {}))).then(() => requestAnimationFrame(() => requestAnimationFrame(() => cmd('ui.backdropPainted', { seq: d.seq }))));
+  }
+  $('panelbg').addEventListener('mousedown', (e) => e.target === $('panelbg') || e.target.tagName === 'IMG' ? cmd('panel.close') : null);
 
   // ---- start page
   let startBuilt = false;
@@ -1001,6 +1034,7 @@
     if (panelKey !== key) {
       panelKey = key;
       panelSyncs = [];
+      pwReload = null;
       clearInterval(memTimer);
       const titles = { settings: t('Ayarlar'), history: t('Geçmiş'), downloads: t('İndirilenler') };
       const head = h(
@@ -1080,7 +1114,8 @@
     ['appearance', 'Görünüm', 'palette'],
     ['search', 'Arama', 'search'],
     ['privacy', 'Gizlilik ve güvenlik', 'shield'],
-    ['sites', 'Site izinleri', 'key'],
+    ['passwords', 'Parolalar', 'key'],
+    ['sites', 'Site izinleri', 'lock'],
     ['performance', 'Performans', 'zap'],
     ['downloads', 'İndirmeler', 'download'],
     ['general', 'Genel', 'settings'],
@@ -1102,7 +1137,7 @@
     );
     panelSyncs.push(() => banner.classList.toggle('hidden', !S.meta.restartNeeded));
     inner.append(banner, h('div', { class: 'group-title big', text: t(SECTIONS.find((s) => s[0] === settingsSection)[1]) }));
-    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, sites: secSites, performance: secPerformance, downloads: secDownloads, general: secGeneral, about: secAbout };
+    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, general: secGeneral, about: secAbout };
     inner.append(...builders[settingsSection]().flat().filter(Boolean));
     return h('div', { class: 'panel-body' }, nav, h('div', { class: 'panel-scroll' }, inner));
   }
@@ -1370,12 +1405,202 @@
     ];
   }
 
+  // ---- passwords
+  let pwQuery = '';
+  const pwShown = new Map(); // id -> revealed password (hidden again after 30 s)
+  let pwReload = null; // set while the passwords section is on screen
+
+  function secPasswords() {
+    let data = null;
+    let editing = null; // id, or 'new'
+    let confirmDel = null;
+    let confirmExport = false;
+    const warn = h('div', { class: 'setting pw-warn hidden' }, ico('warn'), h('span', { text: t('Windows şifrelemesi kullanılamıyor, bu yüzden parolalar kaydedilmiyor.') }));
+    const search = h('input', { class: 'txtin', placeholder: t('Parolalarda ara'), spellcheck: 'false', value: pwQuery });
+    const count = h('small', { class: 'pw-count' });
+    const listBox = h('div', { class: 'pw-list' });
+    const neverBox = h('div', { class: 'pw-never' });
+    const exportBtn = h('button', { class: 'btn small' }, t('Dışa aktar'));
+    const load = () =>
+      cmd('passwords.list').then((d) => {
+        data = d;
+        draw();
+      });
+    pwReload = load;
+
+    function editor(item) {
+      const site = h('input', { class: 'txtin', placeholder: 'https://ornek.com', spellcheck: 'false', value: item ? item.origin : '' });
+      const user = h('input', { class: 'txtin', placeholder: t('Kullanıcı adı veya e-posta'), spellcheck: 'false', value: item ? item.username : '' });
+      const pass = h('input', { class: 'txtin', type: 'password', placeholder: item ? t('Değiştirmek için yeni parola yazın') : t('Parola'), spellcheck: 'false' });
+      const eye = h('button', { class: 'ib', title: t('Göster') }, ico('eye'));
+      eye.addEventListener('click', () => {
+        pass.type = pass.type === 'password' ? 'text' : 'password';
+        eye.replaceChildren(ico(pass.type === 'password' ? 'eye' : 'eyeOff'));
+      });
+      const err = h('small', { class: 'pw-err' });
+      const done = () => {
+        editing = null;
+        draw();
+      };
+      const save = () => {
+        const origin = site.value.trim().replace(/^(?!https?:\/\/)/i, 'https://');
+        if (!/^https?:\/\/[^\s/]+/i.test(origin)) return (err.textContent = t('Geçerli bir site adresi yazın.'));
+        if (!item && !pass.value) return (err.textContent = t('Parola boş olamaz.'));
+        const p = item ? cmd('passwords.update', { id: item.id, origin, username: user.value, password: pass.value }) : cmd('passwords.add', { origin, username: user.value, password: pass.value });
+        p.then((r) => (r && r.ok ? (pwShown.delete(item && item.id), load(), done()) : (err.textContent = t('Kaydedilemedi.'))));
+      };
+      pass.addEventListener('keydown', (e) => e.key === 'Enter' && save());
+      return h(
+        'div',
+        { class: 'pw-edit' },
+        h('div', { class: 'pw-fields' }, site, user, h('div', { class: 'pw-pass' }, pass, eye)),
+        err,
+        h('div', { class: 'actions' }, h('button', { class: 'btn primary small', onclick: save }, t('Kaydet')), h('button', { class: 'btn ghost small', onclick: done }, t('Vazgeç')))
+      );
+    }
+
+    function pwRow(it) {
+      if (editing === it.id) return editor(it);
+      const shown = pwShown.get(it.id);
+      const secret = h('span', { class: 'pw-secret' + (shown ? ' on' : ''), text: shown || '••••••••' });
+      const reveal = h('button', { class: 'ib', title: shown ? t('Gizle') : t('Göster') }, ico(shown ? 'eyeOff' : 'eye'));
+      reveal.addEventListener('click', () => {
+        if (pwShown.has(it.id)) {
+          pwShown.delete(it.id);
+          return draw();
+        }
+        cmd('passwords.reveal', { id: it.id }).then((r) => {
+          if (!r) return;
+          pwShown.set(it.id, r.password);
+          setTimeout(() => pwShown.delete(it.id) && pwReload === load && draw(), 30000);
+          draw();
+        });
+      });
+      const del = h('button', { class: 'ib' + (confirmDel === it.id ? ' danger' : ''), title: confirmDel === it.id ? t('Silmek için tekrar tıklayın') : t('Sil') }, ico('trash'));
+      del.addEventListener('click', () => {
+        if (confirmDel !== it.id) {
+          confirmDel = it.id;
+          return draw();
+        }
+        confirmDel = null;
+        pwShown.delete(it.id);
+        cmd('passwords.remove', { id: it.id }).then(load);
+      });
+      return h(
+        'div',
+        { class: 'pw-row' },
+        letter(it.origin, it.host),
+        h('div', { class: 'txt' }, h('b', { text: it.host, title: it.origin }), h('small', { text: it.username || t('(kullanıcı adı yok)') })),
+        secret,
+        reveal,
+        h('button', { class: 'ib', title: t('Parolayı kopyala'), onclick: () => cmd('passwords.copy', { id: it.id }) }, ico('copy')),
+        h('button', { class: 'ib', title: t('Düzenle'), onclick: () => ((editing = it.id), (confirmDel = null), draw()) }, ico('edit')),
+        del
+      );
+    }
+
+    function draw() {
+      if (!data) return;
+      warn.classList.toggle('hidden', data.available);
+      const q = pwQuery.trim().toLocaleLowerCase(lang);
+      const items = data.items.filter((it) => !q || it.host.toLocaleLowerCase(lang).includes(q) || it.username.toLocaleLowerCase(lang).includes(q));
+      count.textContent = data.items.length ? t('{0} kayıtlı parola', data.items.length) : '';
+      const rows = [];
+      if (editing === 'new') rows.push(editor(null));
+      rows.push(...items.map(pwRow));
+      if (!rows.length) rows.push(h('div', { class: 'pw-empty', text: data.items.length ? t('Aramanızla eşleşen parola yok.') : t('Henüz kayıtlı parola yok. Bir sitede oturum açtığınızda kaydetmeyi önereceğiz.') }));
+      listBox.replaceChildren(...rows);
+      neverBox.replaceChildren(
+        ...(data.never.length
+          ? data.never.map((o) => h('div', { class: 'pw-row' }, letter(o, ''), h('div', { class: 'txt' }, h('b', { text: o.replace(/^https?:\/\//, '') })), h('button', { class: 'btn ghost small', onclick: () => cmd('passwords.never', { origin: o, on: false }).then(load) }, t('Kaldır'))))
+          : [h('div', { class: 'pw-empty', text: t('Yok. "Bu sitede asla" dediğiniz siteler burada listelenir.') })])
+      );
+      exportBtn.textContent = confirmExport ? t('Emin misiniz? Dosya şifresiz olur') : t('Dışa aktar');
+      exportBtn.classList.toggle('danger', confirmExport);
+    }
+
+    search.addEventListener('input', () => {
+      pwQuery = search.value;
+      draw();
+    });
+    exportBtn.addEventListener('click', () => {
+      if (!confirmExport) {
+        confirmExport = true;
+        return draw();
+      }
+      confirmExport = false;
+      draw();
+      cmd('passwords.export').then((r) => r && r.ok && toast(t('Parolalar dışa aktarıldı'), 'download'));
+    });
+    const importBtn = h('button', { class: 'btn small' }, t('İçe aktar'));
+    importBtn.addEventListener('click', () =>
+      cmd('passwords.import').then((r) => {
+        if (!r) return;
+        if (r.error) return toast(t('Dosya okunamadı. Chrome / Google Parola Yöneticisi CSV dosyası seçin.'), 'warn');
+        toast(t('{0} parola eklendi, {1} güncellendi', r.added, r.updated), 'key');
+        load();
+      })
+    );
+    load();
+    return [
+      group(
+        null,
+        warn,
+        row('Parolaları kaydetmeyi öner', 'Bir sitede oturum açınca parolayı kaydetmek isteyip istemediğinizi sorar.', toggle('passwordSave')),
+        row('Giriş alanında önerileri göster', 'Giriş alanına tıklayınca kayıtlı hesaplarınız listelenir; seçtiğiniz hesap doldurulur.', toggle('passwordAutofill'))
+      ),
+      group(
+        'Kayıtlı parolalar',
+        h(
+          'div',
+          { class: 'setting pw-tools' },
+          search,
+          count,
+          h('button', { class: 'btn primary small', onclick: () => ((editing = 'new'), draw()) }, ico('plus'), t('Ekle')),
+          importBtn,
+          exportBtn
+        ),
+        listBox
+      ),
+      group('Hiç kaydedilmeyecek siteler', neverBox),
+      h(
+        'div',
+        { class: 'pw-note' },
+        h('p', { text: t('Parolalarınız yalnızca bu bilgisayarda, Windows hesabınıza bağlı şifreleme (DPAPI) ile saklanır; hiçbir sunucuya gönderilmez. Siteler sadece kendi parolalarını, siz öneriye tıkladığınızda alabilir.') }),
+        h(
+          'p',
+          null,
+          t("Google Parola Yöneticisi ile otomatik eşitlemeye Google yalnızca Chrome'da izin veriyor. Google'daki parolalarınızı taşımak için: passwords.google.com → Ayarlar → Dışa aktar, sonra buradan İçe aktar."),
+          ' ',
+          h('button', { class: 'linkbtn', onclick: () => cmd('app.openExternalDoc', { url: 'https://passwords.google.com/options' }) }, t('Google Parola Yöneticisini aç'))
+        )
+      )
+    ];
+  }
+
   function secGeneral() {
+    const home = h('input', { class: 'txtin', placeholder: 'https://www.google.com/', spellcheck: 'false' });
+    const homeHint = h('small');
+    home.addEventListener('change', () => {
+      let v = home.value.trim();
+      if (v && !/^https?:\/\//i.test(v)) v = 'https://' + v;
+      if (/^https?:\/\/[^\s]+$/i.test(v)) {
+        homeHint.textContent = '';
+        setSetting('homeUrl', v);
+      } else homeHint.textContent = t('Geçerli bir adres yazın, örneğin https://www.google.com');
+    });
+    const homeRow = h('div', { class: 'setting col' }, h('div', { class: 'txt' }, h('b', { text: t('Ana sayfa adresi') })), home, homeHint);
+    panelSyncs.push(() => {
+      if (document.activeElement !== home) home.value = S.settings.homeUrl;
+      homeRow.classList.toggle('hidden', S.settings.newTabPage !== 'home');
+    });
     return [
       group(
         null,
         row('Dil', null, seg('language', [['auto', 'Sistem'], ['tr', 'Türkçe'], ['en', 'English']])),
         row('Başlangıçta', null, seg('startup', [['restore', 'Kaldığım yerden devam et'], ['fresh', 'Yeni başla']])),
+        row('Yeni sekme açınca', 'Ctrl+T veya "Yeni sekme" ile ne açılsın.', seg('newTabPage', [['palette', 'Arama çubuğu'], ['start', 'Başlangıç sayfası'], ['home', 'Ana sayfa']])),
+        homeRow,
         row('Yazım denetimi', 'Yazı alanlarında yanlış yazılan kelimelerin altını çizer.', toggle('spellcheck')),
         row('Varsayılan tarayıcı', 'Bağlantılar Techin Browser ile açılsın.', h('button', { class: 'btn small', onclick: () => cmd('app.defaultBrowser') }, t('Varsayılan yap'))),
         h(
@@ -1663,6 +1888,15 @@
       const what = bar.perms.map((p) => t(PERM_PHRASE[p] || p)).join(t(' ve '));
       msg = h('span', { class: 'msg' }, h('b', { text: bar.host }), ' ', t('{0} izni istiyor', what));
       buttons = [h('button', { class: 'btn primary small', onclick: respond('allow') }, t('İzin ver')), h('button', { class: 'btn small', onclick: respond('deny') }, t('Engelle'))];
+    } else if (bar.type === 'password') {
+      icon = 'key';
+      const who = bar.username ? h('small', { text: bar.username }) : null;
+      msg =
+        bar.mode === 'update'
+          ? h('span', { class: 'msg' }, h('b', { text: bar.host }), ' ', t('için kayıtlı parola güncellensin mi?'), who)
+          : h('span', { class: 'msg' }, h('b', { text: bar.host }), ' ', t('için parola kaydedilsin mi?'), who);
+      buttons = [h('button', { class: 'btn primary small', onclick: respond('save') }, bar.mode === 'update' ? t('Güncelle') : t('Kaydet'))];
+      if (bar.mode !== 'update') buttons.push(h('button', { class: 'btn small', onclick: respond('never') }, t('Bu sitede asla')));
     } else if (bar.type === 'external') {
       icon = 'external';
       msg = h('span', { class: 'msg', title: bar.url }, h('b', { text: (bar.origin || '').replace(/^https?:\/\//, '') }), ' ', t('bilgisayarınızdaki bir uygulamayı açmak istiyor'), h('small', { text: bar.host + ':' }));
@@ -2112,6 +2346,10 @@
       b.classList.remove('bounce');
       void b.offsetWidth;
       b.classList.add('bounce');
+    } else if (name === 'backdrop') {
+      setBackdrop(data);
+    } else if (name === 'passwords-changed') {
+      if (pwReload) pwReload();
     } else if (name === 'modal-open') {
       const i = $('modal').querySelector('input');
       if (i) i.focus();
