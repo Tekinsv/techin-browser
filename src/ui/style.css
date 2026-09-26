@@ -1149,7 +1149,8 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
   z-index: 30;
   animation: sb-in-left 0.22s var(--ease);
 }
-.sb-peek.side-right #sidebar { left: auto; right: 8px; animation-name: sb-in-right; }
+/* must beat ".sb-hidden.side-right #sidebar { transform: translateX(100%) }" (same weight + later) */
+.sb-peek.side-right #sidebar { left: auto; right: 8px; transform: none; opacity: 1; pointer-events: auto; animation-name: sb-in-right; }
 @keyframes sb-in-left { from { opacity: 0; transform: translateX(-16px); } }
 @keyframes sb-in-right { from { opacity: 0; transform: translateX(16px); } }
 .sb-peek.page-visible #bg { clip-path: var(--hole); }

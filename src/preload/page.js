@@ -172,6 +172,36 @@ if (IS_YOUTUBE) {
   });
 }
 
+// ------------------------------------------------------------ 3b) background tabs don't start media
+// A page that starts hidden (a link opened in the background with the middle
+// button) must not start playing video/audio on its own: nothing plays until the
+// user has interacted with that page (clicked, pressed a key). Sites treat it as
+// a blocked autoplay and show their play button. Pages opened normally are untouched.
+if (document.visibilityState === 'hidden' && /^https?:$/.test(location.protocol)) {
+  const allowed = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
+  inMain(() => {
+    const proto = HTMLMediaElement.prototype;
+    const play = proto.play;
+    const allowedMain = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
+    try {
+      Object.defineProperty(proto, 'play', {
+        configurable: true,
+        writable: true,
+        value: function () {
+          if (allowedMain()) return play.apply(this, arguments);
+          return Promise.reject(new DOMException('Playback waits until you interact with this tab', 'NotAllowedError'));
+        }
+      });
+    } catch (e) {}
+  });
+  // The autoplay attribute doesn't go through play(): stop it as it starts.
+  const hold = (e) => {
+    if (!allowed() && e.target instanceof HTMLMediaElement) e.target.pause();
+  };
+  document.addEventListener('play', hold, true);
+  document.addEventListener('playing', hold, true);
+}
+
 // ------------------------------------------------------------ 4) passwords
 // Everything here runs in the isolated world: page scripts can't call
 // ipcRenderer, can't see our suggestion list (closed shadow root) and can't

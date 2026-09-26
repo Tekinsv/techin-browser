@@ -40,6 +40,8 @@ function startServer() {
     '/welcome': '<!doctype html><title>Welcome</title><h1>Hoş geldin</h1>',
     // Icon that arrives slowly while the page rewrites its URL (like YouTube): the tab must keep the icon.
     '/favpage': '<!doctype html><title>Fav</title><link rel="icon" href="/fav.png"><script>setTimeout(() => history.replaceState(null, "", "/favpage?pp=1"), 60)</script><h1>icon</h1>',
+    '/media': '<!doctype html><title>Media</title><audio id="a" autoplay src="/tone.wav"></audio>',
+    '/medialink': '<!doctype html><title>MediaLinks</title><a id="l" href="/media" style="display:block;padding:40px;font-size:30px">ses</a>',
     '/favlink': '<!doctype html><title>Links</title><a id="l" href="/favpage" style="display:block;padding:40px;font-size:30px">bağlantı</a>',
     '/long': '<!doctype html><title>Long</title><style>body{margin:0;font:18px system-ui}section{height:100vh;display:grid;place-items:center;scroll-snap-align:start}html{scroll-snap-type:y mandatory}</style>' + Array.from({ length: 6 }, (_, i) => `<section style="background:hsl(${i * 60} 60% 60%)">Short ${i + 1}</section>`).join('')
   };
@@ -67,6 +69,26 @@ function startServer() {
     }
     if (url === '/ads') {
       return res.end('<!doctype html><title>Ads</title><script src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script><img src="https://www.google-analytics.com/collect?v=1">');
+    }
+    if (url === '/tone.wav') {
+      // 20 s of a quiet tone (8 kHz, 8-bit mono WAV)
+      const n = 8000 * 20;
+      const b = Buffer.alloc(44 + n);
+      b.write('RIFF', 0);
+      b.writeUInt32LE(36 + n, 4);
+      b.write('WAVEfmt ', 8);
+      b.writeUInt32LE(16, 16);
+      b.writeUInt16LE(1, 20);
+      b.writeUInt16LE(1, 22);
+      b.writeUInt32LE(8000, 24);
+      b.writeUInt32LE(8000, 28);
+      b.writeUInt16LE(1, 32);
+      b.writeUInt16LE(8, 34);
+      b.write('data', 36);
+      b.writeUInt32LE(n, 40);
+      for (let i = 0; i < n; i++) b[44 + i] = 128 + Math.round(12 * Math.sin(i / 8));
+      res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': b.length });
+      return res.end(b);
     }
     if (url === '/fav.png') {
       const png = require('electron').nativeImage.createFromBitmap(Buffer.alloc(16 * 16 * 4, 180), { width: 16, height: 16 }).toPNG();
@@ -488,6 +510,45 @@ async function run(ctl) {
       ctl.setSetting('sidebarAutoHide', false);
       await sleep(200);
       ok('Kenar çubuğu otomatik gizleniyor, kenara gelince sayfanın üstünde açılıyor', mA.sidebar === 0 && mA.content.x >= 6 && !!peekOn && peekUi && peekOff, JSON.stringify({ x: mA.content.x, peekOn: !!peekOn, peekUi, peekOff }));
+      // same on the right side (the peeking sidebar used to open outside the window)
+      ctl.setSetting('sidebarSide', 'right');
+      ctl.setSetting('sidebarAutoHide', true);
+      await sleep(300);
+      w.setSidebarPeek(true);
+      await waitFor(() => w.uiOnTop && w.sidebarPeek, 2000, 50);
+      await sleep(400);
+      const rr = await uiq("(() => { const r = document.getElementById('sidebar').getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), iw: innerWidth }; })()");
+      w.setSidebarPeek(false);
+      ctl.setSetting('sidebarAutoHide', false);
+      ctl.setSetting('sidebarSide', 'left');
+      await sleep(200);
+      ok('Sağdaki kenar çubuğu da kenara gelince pencerenin içinde açılıyor', rr.l > rr.iw / 2 && rr.r <= rr.iw, JSON.stringify(rr));
+
+      // a tab opened in the background doesn't start its video/audio until the user interacts with it
+      const mt = w.createTab({ url: base + '/medialink' });
+      await loaded(mt, 10000);
+      await sleep(300);
+      const mp = await mt.wc.executeJavaScript("(() => { const r = document.getElementById('l').getBoundingClientRect(); return { x: Math.round(r.left + 20), y: Math.round(r.top + r.height / 2) }; })()");
+      mt.wc.focus();
+      for (const type of ['mouseDown', 'mouseUp']) {
+        mt.wc.sendInputEvent({ type, x: mp.x, y: mp.y, button: 'middle', clickCount: 1 });
+        await sleep(40);
+      }
+      const bgm = await waitFor(() => [...w.tabs.values()].find((t) => t !== mt && t.url.includes('/media') && !t.url.includes('link') && t.alive && !t.wc.isLoading()), 5000, 100);
+      await sleep(1500);
+      const held = bgm ? await bgm.wc.executeJavaScript("document.getElementById('a').paused") : null;
+      const quiet = bgm ? !bgm.wc.isCurrentlyAudible() : null;
+      let userPlay = null;
+      if (bgm) {
+        w.activateTab(bgm.id);
+        await sleep(600);
+        const stillHeld = await bgm.wc.executeJavaScript("document.getElementById('a').paused");
+        userPlay = stillHeld && (await bgm.wc.executeJavaScript("document.getElementById('a').play().then(() => 'played').catch((e) => e.name)", true));
+        bgm.close({ force: true });
+      }
+      mt.close({ force: true });
+      w.activateTab(tab.id);
+      ok('Arka planda açılan sekmede video/ses kendiliğinden başlamıyor, oynat deyince başlıyor', held === true && quiet === true && userPlay === 'played', JSON.stringify({ held, quiet, userPlay }));
     }
 
     // --- a local HTML file must not read other local files (the file:// fuse
