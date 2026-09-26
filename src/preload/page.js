@@ -57,12 +57,123 @@ if (FLAG_NO_PASSKEYS) {
   });
 }
 
-// ------------------------------------------------------------ 3) smooth wheel
-// YouTube Shorts: YouTube pins its feed while it swaps videos, so any scroll
-// animation we run fights it (visible jitter). Its own "next video" transition
-// (the arrow keys) is smooth and runs on Chromium's compositor - use that: one
-// wheel notch = one ArrowDown/ArrowUp, at most one per slide.
+// ------------------------------------------------------------ 2b) Chrome Web Store
+// The store calls chrome.webstorePrivate as soon as it loads. Electron exposes
+// that API only half-implemented: getReferrerChain dereferences a missing
+// Safe Browsing service and crashes the whole browser process. Hide the API
+// before the store's own scripts run; the store then treats us as a browser
+// that can't install extensions instead of crashing.
+if (/^chromewebstore\.google\.com$|^chrome\.google\.com$/.test(location.hostname)) {
+  inMain(() => {
+    const c = window.chrome;
+    if (!c) return;
+    for (const k of ['webstorePrivate', 'management']) {
+      try {
+        Object.defineProperty(c, k, { value: undefined, configurable: false, enumerable: false, writable: false });
+      } catch (e) {}
+    }
+  });
+}
+
+// ------------------------------------------------------------ 2c) YouTube Shorts ambient mode
+// YouTube's server sends the Shorts "Ambient mode" switch with empty commands
+// (a CLIENT_SIGNAL without actions), while ytd-shorts only turns the effect
+// on/off through the TOGGLE_CINEMATIC_SHORTS_ON/OFF signal actions. So the
+// switch flips but the glow stays. Add the missing actions to that switch as the
+// data arrives (JSON.parse / fetch().json() / the inline ytInitialData).
 const IS_YOUTUBE = /(^|\.)youtube\.com$/.test(location.hostname);
+if (IS_YOUTUBE) {
+  inMain(() => {
+    const FORM = '/youtube/app/shorts_cinematic_toggle_form';
+    const switches = []; // patched switch data, re-rendered each time the menu opens
+    // Saved Shorts ambient choice from the PREF cookie: flag 202 = user chose,
+    // 201 = ambient on (31 flags per fN, so both live in f7). null = never chosen.
+    const savedAmbient = () => {
+      const pref = (document.cookie.split('; ').find((c) => c.startsWith('PREF=')) || '').slice(5);
+      const f7 = parseInt((pref.split('&').find((p) => p.startsWith('f7=')) || '').slice(3), 16) || 0;
+      return f7 & (1 << (202 - 186)) ? !!(f7 & (1 << (201 - 186))) : null;
+    };
+    document.addEventListener(
+      'yt-action',
+      (e) => {
+        const name = e.detail && e.detail.actionName;
+        if (name !== 'yt-signal-action-toggle-cinematic-shorts-on' && name !== 'yt-signal-action-toggle-cinematic-shorts-off') return;
+        for (const sw of switches) sw.switchedOnByDefault = name.endsWith('-on');
+      },
+      true
+    );
+    const addActions = (cmd, signal) => {
+      const list = cmd && cmd.innertubeCommand && cmd.innertubeCommand.commandExecutorCommand && cmd.innertubeCommand.commandExecutorCommand.commands;
+      if (!Array.isArray(list)) return;
+      for (const c of list) {
+        const ep = c && c.signalServiceEndpoint;
+        if (!ep || (Array.isArray(ep.actions) && ep.actions.length)) continue;
+        ep.actions = [{ clickTrackingParams: c.clickTrackingParams, signalAction: { signal } }];
+      }
+    };
+    const fix = (node, depth) => {
+      if (!node || typeof node !== 'object' || depth > 60) return;
+      if (Array.isArray(node)) {
+        for (const x of node) fix(x, depth + 1);
+        return;
+      }
+      const sw = node.switchListItemViewModel;
+      if (sw && sw.formFieldMetadata && sw.formFieldMetadata.formId === FORM) {
+        addActions(sw.switchOnCommand, 'TOGGLE_CINEMATIC_SHORTS_ON');
+        addActions(sw.switchOffCommand, 'TOGGLE_CINEMATIC_SHORTS_OFF');
+        // These signal commands never report completion, so with this flag set
+        // every tap after the first one is ignored.
+        sw.ignoreTapUntilCommandCompletes = false;
+        // The switch shows a form value that YouTube fills from the *watch page*
+        // ambient flag, not the Shorts one the toggle saves. Unbind it from that
+        // form and show the saved Shorts choice instead, kept up to date below.
+        delete sw.formFieldMetadata;
+        const saved = savedAmbient();
+        if (saved !== null) sw.switchedOnByDefault = saved;
+        switches.push(sw);
+        if (switches.length > 40) switches.shift();
+      }
+      for (const k in node) {
+        const v = node[k];
+        if (v && typeof v === 'object') fix(v, depth + 1);
+      }
+    };
+    const parse = JSON.parse;
+    JSON.parse = function (text, reviver) {
+      const out = parse.call(this, text, reviver);
+      try {
+        if (typeof text === 'string' && text.includes(FORM)) fix(out, 0);
+      } catch (e) {}
+      return out;
+    };
+    const json = Response.prototype.json;
+    Response.prototype.json = function () {
+      // Only YouTube's own API responses; everything else keeps the native path.
+      if (!/\/youtubei\//.test(this.url || '')) return json.call(this);
+      return this.text().then((t) => JSON.parse(t));
+    };
+    for (const name of ['ytInitialData']) {
+      let value;
+      try {
+        Object.defineProperty(window, name, {
+          configurable: true,
+          enumerable: true,
+          get: () => value,
+          set: (v) => {
+            try {
+              fix(v, 0);
+            } catch (e) {}
+            value = v;
+          }
+        });
+      } catch (e) {}
+    }
+  });
+}
+
+// ------------------------------------------------------------ 3) smooth wheel
+// YouTube Shorts: one wheel notch = one video, slid with a compositor transform
+// (see ytTransformSlide), so it stays smooth while YouTube is busy.
 let ytNextAt = 0;
 const YT_MODE = (argv.find((a) => a.startsWith('--techin-yt-mode=')) || '').split('=')[1] || 'transform';
 if (IS_YOUTUBE && YT_MODE === 'snap') {

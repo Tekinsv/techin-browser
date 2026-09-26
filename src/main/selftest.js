@@ -344,8 +344,49 @@ async function run(ctl) {
           const after = await waitFor(async () => { const p = await yt.wc.executeJavaScript('location.pathname'); return p !== before && p; }, 5000, 100);
           if (!after) console.log('SHORTS-DIAG', JSON.stringify(await yt.wc.executeJavaScript('({ active: document.activeElement && (document.activeElement.tagName + "#" + document.activeElement.id), focus: document.hasFocus(), prevented: window.__wp, hover: (document.elementFromPoint(innerWidth / 2, innerHeight / 2) || {}).id, btn: !!document.querySelector("#navigation-button-down button") })')));
           ok('Shorts: tek tekerlek adımı YouTube kendi kayma geçişiyle sonraki videoya geçiyor', !!after, `${before} -> ${after}`);
+          // Ambient mode switch in the "..." menu must really turn the glow off
+          // (YouTube sends that switch without its toggle actions; page.js adds them).
+          await sleep(1500);
+          const realClick = async (p) => {
+            for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+              yt.wc.sendInputEvent({ type, x: p.x, y: p.y, button: 'left', clickCount: 1 });
+              await sleep(40);
+            }
+          };
+          const ambient = () => yt.wc.executeJavaScript("(() => { const c = document.querySelector('ytd-shorts')?.polymerController; const cc = c && Object.keys(c).map((k) => c[k]).find((v) => v && typeof v === 'object' && 'settingEnabled' in v && 'prefersReducedMotionQuery' in v); return cc ? cc.settingEnabled : null; })()").catch(() => null);
+          const menuAt = await yt.wc.executeJavaScript("(() => { const r = [...document.querySelectorAll('button[aria-haspopup], #menu-button button, button')].filter((x) => /Daha fazla|More actions/i.test(x.getAttribute('aria-label') || '')).map((x) => x.getBoundingClientRect()).find((q) => q.width > 0 && q.top >= 0 && q.bottom <= innerHeight); return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null; })()").catch(() => null);
+          const was = await ambient();
+          if (menuAt && was !== null) {
+            await realClick(menuAt);
+            const findSwitch = () => yt.wc.executeJavaScript("(() => { const s = [...document.querySelectorAll('yt-list-item-view-model [role=\"switch\"]')].find((x) => x.offsetParent && /Ambi/i.test(x.getAttribute('aria-label') || '')); if (!s) return null; const q = s.getBoundingClientRect(); return { x: Math.round(q.left + q.width / 2), y: Math.round(q.top + q.height / 2), on: s.getAttribute('aria-checked') === 'true' }; })()").catch(() => null);
+            // Two flips (on->off->on or off->on->off): the effect must follow the switch each time.
+            const trail = [];
+            for (let i = 0; i < 2; i++) {
+              if (i > 0) await realClick(menuAt); // the menu closes after a tap
+              const sw = await waitFor(findSwitch, 4000, 200);
+              if (!sw) break;
+              await realClick(sw);
+              const want = !sw.on;
+              trail.push(`${sw.on}->${(await waitFor(async () => ((await ambient()) === want ? 'ok' : null), 3000, 150)) ? want : await ambient()}`);
+              await sleep(600);
+            }
+            const good = trail.length === 2 && trail.every((s) => s === 'true->false' || s === 'false->true');
+            ok('Shorts: "Ambiyans modu" düğmesi efekti gerçekten açıp kapatıyor', good, `başta ${was}; düğme->efekt: ${trail.join(', ')}`);
+          } else {
+            ok('Shorts: "Ambiyans modu" düğmesi efekti gerçekten açıp kapatıyor', false, `menü ${!!menuAt}, ambiyans ${was}`);
+          }
         }
         yt.close({ force: true });
+        w.activateTab(tab.id);
+      }
+      // --- Chrome Web Store used to crash the whole browser (webstorePrivate)
+      {
+        const ws = w.createTab({ url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh' });
+        await loaded(ws, 20000);
+        await sleep(4000);
+        const st = await ws.wc.executeJavaScript("({ api: typeof chrome !== 'undefined' && !!chrome.webstorePrivate, title: document.title })").catch((e) => ({ err: e.message }));
+        ok('Chrome Web Mağazası açılınca tarayıcı çökmüyor', st && st.api === false && !st.err, JSON.stringify(st));
+        ws.close({ force: true });
         w.activateTab(tab.id);
       }
       // --- Google sign-in: presented as Firefox only on accounts.google.com
