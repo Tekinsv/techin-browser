@@ -1156,3 +1156,25 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
 .sb-peek.page-visible #bg { clip-path: var(--hole); }
 .sb-peek.page-visible:not(.panel-open) #content { background: transparent; }
 .sb-peek.page-visible:not(.panel-open) #content > :not(#strip) { visibility: hidden; }
+
+/* ---------------------------------------------------------------- favorites at the bottom (Arc-style)
+   Just above the downloads button; tiles when the sidebar is wide, tab-like icons when compact. */
+#favorites { order: 0; margin: 0; padding-top: 8px; border-top: 1px solid var(--line); max-height: 42%; overflow-y: auto; scrollbar-width: none; }
+#favorites::-webkit-scrollbar { display: none; }
+#favorites:empty { border-top: 0; padding-top: 0; }
+#favorites.drop-here, #favorites.empty-drop { border-top: 0; }
+#favorites .fav { height: 42px; border-radius: 10px; background: color-mix(in srgb, var(--fg) 7%, transparent); }
+#favorites .fav:hover { background: color-mix(in srgb, var(--fg) 13%, transparent); }
+#favorites .fav.active { background: var(--active-bg); box-shadow: var(--active-shadow); }
+/* compact sidebar: the same rows as tabs */
+.compact #favorites { grid-template-columns: 1fr; gap: 4px; padding-top: 6px; }
+.compact #favorites .fav { height: 36px; border-radius: 9px; background: transparent; }
+.compact #favorites .fav:hover { background: var(--hover); }
+.compact #favorites .fav.active { background: var(--active-bg); box-shadow: var(--active-shadow); }
+.compact #favorites .fav.open::after { bottom: auto; top: 50%; left: 2px; width: 3px; height: 12px; margin-top: -6px; border-radius: 2px; }
+/* the peeking (auto-hidden) sidebar shows them the same way */
+.sb-peek #favorites { max-height: 38%; }
+/* empty favorites become a drop zone while a tab is dragged */
+.compact #favorites.empty-drop { display: grid; min-height: 40px; }
+#favorites.empty-drop::before { content: attr(data-hint); grid-column: 1 / -1; align-self: center; text-align: center; font-size: calc(11px * var(--z, 1)); color: var(--fg-2); padding: 0 8px; }
+.compact #favorites.empty-drop::before { content: none; }

@@ -983,6 +983,19 @@ async function run(ctl) {
     await sleep(400);
     ok('Sürükle-bırak: sekme sık kullanılanlara ve sabitlenenlere taşındı', ctl.library.favorites.length === 1 && ctl.library.spaces[0].pinned.length === 1, `fav ${ctl.library.favorites.length}, sabit ${ctl.library.spaces[0].pinned.length}`);
     await capture('11-favorites');
+    {
+      // Arc-style: favorites sit at the bottom, right above the downloads button
+      const pos = async () =>
+        w.uiView.webContents.executeJavaScript("(() => { const f = document.getElementById('favorites').getBoundingClientRect(); const foot = document.querySelector('.sb-foot').getBoundingClientRect(); const list = document.getElementById('sbscroll').getBoundingClientRect(); return { favTop: Math.round(f.top), favBottom: Math.round(f.bottom), footTop: Math.round(foot.top), listTop: Math.round(list.top), tiles: document.querySelectorAll('#favorites .fav').length, w: Math.round(document.querySelector('#favorites .fav').getBoundingClientRect().width) }; })()");
+      const wide = await pos();
+      ctl.setSetting('sidebarCompact', true);
+      await sleep(400);
+      const narrow = await pos();
+      ctl.setSetting('sidebarCompact', false);
+      await sleep(300);
+      const atBottom = (p) => p.tiles >= 1 && p.favTop > p.listTop && p.footTop - p.favBottom >= 0 && p.footTop - p.favBottom < 24;
+      ok('Sık kullanılanlar altta, indirme düğmesinin hemen üstünde (dar hâlde sekme gibi)', atBottom(wide) && atBottom(narrow) && narrow.w < 50, JSON.stringify({ wide, narrow }));
+    }
     ctl.setSetting('theme', 'dark');
     await sleep(700);
     await capture('08-dark');

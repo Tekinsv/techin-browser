@@ -715,7 +715,10 @@
     }
     e.dataTransfer.effectAllowed = 'copyMove';
     requestAnimationFrame(() => el.classList.add('dragging'));
-    if (!S.favorites.length) $('favorites').classList.add('empty-drop');
+    if (!S.favorites.length) {
+      $('favorites').dataset.hint = t('Sık kullanılanlara eklemek için buraya bırakın');
+      $('favorites').classList.add('empty-drop');
+    }
   });
 
   document.addEventListener('dragend', () => {
@@ -872,7 +875,7 @@
 
   const TIPS = [
     'İpucu: Ctrl+T ile her yerden arayın ve komut çalıştırın.',
-    'İpucu: Sekmeyi yukarıdaki kutucuklara sürükleyip sık kullanılanlara ekleyin.',
+    'İpucu: Sekmeye sağ tıklayıp "Sık kullanılanlara ekle" deyin ya da kenar çubuğunun altına sürükleyin.',
     'İpucu: Ctrl+Shift+S kenar çubuğunu daraltır.',
     'İpucu: Kullanmadığınız sekmeler uyutulur ve RAM boşaltılır.',
     'İpucu: Kenar çubuğunda iki parmakla yana kaydırarak alan değiştirin.',
