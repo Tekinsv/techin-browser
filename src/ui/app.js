@@ -2160,7 +2160,15 @@
     renderContent();
     renderStrip();
     renderModal();
+    // The main process keeps us below the page until the dialog and the hole over
+    // the page are actually painted (two frames = committed to the screen).
+    const seq = S.modal && S.modal.seq;
+    if (seq && seq !== paintedModalSeq) {
+      paintedModalSeq = seq;
+      requestAnimationFrame(() => requestAnimationFrame(() => cmd('ui.modalPainted', { seq })));
+    }
   }
+  let paintedModalSeq = 0;
 
   T.onState((state) => {
     S = state;

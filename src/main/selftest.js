@@ -194,7 +194,7 @@ async function run(ctl) {
 
     // --- palette
     w.openPalette('new');
-    ok('Komut çubuğu açıldı, arayüz sayfanın üstünde', w.modal && w.uiOnTop);
+    ok('Komut çubuğu açıldı, arayüz sayfanın üstünde', await waitFor(() => w.modal && w.uiOnTop, 1000, 10));
     const q = palette.query(ctl, w, 'second');
     ok('Komut çubuğu açık sekmeyi buluyor', q.some((r) => r.type === 'tab'), q.map((r) => r.type).join(','));
     const q2 = palette.query(ctl, w, 'ayarlar');
@@ -375,6 +375,27 @@ async function run(ctl) {
           } else {
             ok('Shorts: "Ambiyans modu" düğmesi efekti gerçekten açıp kapatıyor', false, `menü ${!!menuAt}, ambiyans ${was}`);
           }
+          // Wheel over the open comments panel scrolls the comments, not the videos.
+          await sleep(1500);
+          const cBtn = await yt.wc.executeJavaScript("(() => { const b = [...document.querySelectorAll('button')].filter((x) => /yorum|comment/i.test(x.getAttribute('aria-label') || '')).map((x) => x.getBoundingClientRect()).find((q) => q.width > 0 && q.top >= 0 && q.bottom <= innerHeight); return b ? { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) } : null; })()").catch(() => null);
+          const panelState = () => yt.wc.executeJavaScript("(() => { const p = [...document.querySelectorAll('ytd-engagement-panel-section-list-renderer')].find((x) => x.offsetParent && /comment/i.test(x.getAttribute('target-id') || x.id || '') && x.getBoundingClientRect().width > 50); if (!p) return null; const r = p.getBoundingClientRect(); const sc = [...p.querySelectorAll('*')].find((n) => n.scrollHeight > n.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(n).overflowY)); return sc ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height * 0.6), top: Math.round(sc.scrollTop), path: location.pathname } : null; })()").catch(() => null);
+          if (cBtn) {
+            for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+              yt.wc.sendInputEvent({ type, x: cBtn.x, y: cBtn.y, button: 'left', clickCount: 1 });
+              await sleep(40);
+            }
+          }
+          const p0 = await waitFor(panelState, 8000, 250);
+          let p1 = null;
+          if (p0) {
+            for (let i = 0; i < 3; i++) {
+              yt.wc.sendInputEvent({ type: 'mouseWheel', x: p0.x, y: p0.y, deltaX: 0, deltaY: -100, wheelTicksX: 0, wheelTicksY: -1, canScroll: true, hasPreciseScrollingDeltas: false });
+              await sleep(250);
+            }
+            await sleep(1200);
+            p1 = await panelState();
+          }
+          ok('Shorts: yorumların üstünde tekerlek yorumları kaydırıyor, video değişmiyor', !!p0 && !!p1 && p1.path === p0.path && p1.top > p0.top, JSON.stringify({ p0, p1 }));
         }
         yt.close({ force: true });
         w.activateTab(tab.id);
@@ -531,8 +552,33 @@ async function run(ctl) {
     ok('Komut çubuğu yazınca sonuç listeliyor', rows >= 2, `${rows} sonuç`);
     await ux('document.querySelector(".palette input").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true');
     ok('Esc komut çubuğunu kapatıyor', await waitFor(() => !w.modal, 2000));
+    // Raising the UI over the page must not flash the UI's own background where
+    // the page is (regression: black flicker when opening site settings).
+    let raiseShot = null;
+    {
+      const c = w.buildState().layout.content;
+      const rect = { x: Math.round(c.x + c.width / 2 - 20), y: Math.round(c.y + c.height / 2 - 20), width: 40, height: 40 };
+      const cv = w.win.contentView;
+      const add = cv.addChildView;
+      cv.addChildView = function (v, ...rest) {
+        const res = add.call(this, v, ...rest);
+        if (v === w.uiView && w.modal && !raiseShot) raiseShot = w.uiView.webContents.capturePage(rect);
+        return res;
+      };
+      setTimeout(() => (cv.addChildView = add), 1500);
+    }
     await ctl.siteInfo(w);
     await sleep(300);
+    {
+      let alpha = null;
+      if (raiseShot) {
+        const b = (await raiseShot).toBitmap();
+        let s = 0;
+        for (let i = 3; i < b.length; i += 4) s += b[i];
+        alpha = Math.round(s / (b.length / 4));
+      }
+      ok('Pencere açılırken sayfa bir an kararmıyor (titreme yok)', alpha !== null && alpha < 200, `arayüz üste alındığında sayfa bölgesi opaklığı: ${alpha}/255`);
+    }
     ok('Site bilgisi penceresi açıldı', (await ux('!!document.querySelector(".siteinfo")')) && w.modal?.type === 'siteinfo');
     await capture('09-siteinfo');
     w.closeModal();

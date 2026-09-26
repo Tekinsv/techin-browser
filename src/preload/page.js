@@ -265,7 +265,19 @@ function ytTransformSlide(down) {
 function youtubeShortsWheel(e) {
   if (!IS_YOUTUBE || !location.pathname.startsWith('/shorts')) return false;
   if (YT_MODE === 'snap' || YT_MODE === 'native') return 'native';
-  const inFeed = e.composedPath().some((n) => n instanceof Element && (n.id === 'shorts-container' || n.tagName === 'YTD-SHORTS'));
+  // Only wheel over the videos themselves switches video. Side panels inside
+  // ytd-shorts (comments, description, ...) and anything scrollable on the way
+  // (the comment list) scroll normally.
+  let inFeed = false;
+  for (const n of e.composedPath()) {
+    if (!(n instanceof Element)) continue;
+    if (n.id === 'shorts-container' || n.tagName === 'YTD-SHORTS') {
+      inFeed = true;
+      break;
+    }
+    if (n.tagName === 'YTD-ENGAGEMENT-PANEL-SECTION-LIST-RENDERER' || /engagement-panel|panel-container/.test(n.id)) return false;
+    if (n.scrollHeight > n.clientHeight + 1 && /(auto|scroll|overlay)/.test(getComputedStyle(n).overflowY)) return false;
+  }
   if (!inFeed) return false;
   const a = document.activeElement;
   if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return false;

@@ -26,6 +26,7 @@ const HANDLERS = {
     w.show();
     w.scheduleState();
   },
+  'ui.modalPainted': (ctl, w, a) => int(a.seq, 1) && w.onModalPainted(a.seq),
   'window.minimize': (ctl, w) => w.win.minimize(),
   'window.maximize': (ctl, w) => w.toggleMaximize(),
   'window.close': (ctl, w) => w.win.close(),

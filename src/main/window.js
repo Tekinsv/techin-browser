@@ -327,7 +327,7 @@ class TechinWindow {
       this.uiOnTop = false;
     }
     this.shownViews = desired;
-    const wantUiTop = !!this.modal || !desired.length;
+    const wantUiTop = (!!this.modal && this.uiTopReady) || !desired.length;
     if (wantUiTop && !this.uiOnTop) {
       this.win.contentView.addChildView(this.uiView);
       this.uiOnTop = true;
@@ -818,23 +818,42 @@ class TechinWindow {
   }
 
   openModal(modal) {
-    if (this.modal) this.closeModal(null);
+    const replacing = !!this.modal;
+    if (replacing) this.closeModal(null, true);
     this.modal = modal;
+    modal._seq = this._modalSeq = (this._modalSeq || 0) + 1;
+    // Raise the UI above the page only once it has painted the dialog and the
+    // see-through hole over the page; raising first shows a frame or two of the
+    // UI's own background where the page is (a visible black flicker).
+    this.uiTopReady = replacing && this.uiOnTop;
+    clearTimeout(this._modalRaiseFallback);
+    this._modalRaiseFallback = setTimeout(() => this.onModalPainted(modal._seq), 250);
     this.syncViews();
     this.uiView.webContents.focus();
-    this.scheduleState();
+    this.sendState();
     this.sendEvent('modal-open', { type: modal.type });
   }
 
-  closeModal(result = null) {
+  /** The UI reports that the dialog with this sequence number is on screen. */
+  onModalPainted(seq) {
+    if (!this.modal || this.modal._seq !== seq || this.uiTopReady || this.win.isDestroyed()) return;
+    clearTimeout(this._modalRaiseFallback);
+    this.uiTopReady = true;
+    this.syncViews();
+  }
+
+  closeModal(result = null, replacing = false) {
     const m = this.modal;
     if (!m) return;
     this.modal = null;
+    clearTimeout(this._modalRaiseFallback);
     try {
       m.onClose?.(result);
     } catch (err) {
       console.error(err);
     }
+    if (replacing) return; // openModal() takes over right away, keep the UI where it is
+    this.uiTopReady = false;
     this.syncViews();
     this.focusPage();
     this.scheduleState();
@@ -1180,7 +1199,7 @@ class TechinWindow {
       panel: this.panel,
       find: { open: this.find.open && !!tab, text: this.find.text },
       infobar: infobar ? { id: infobar.id, type: infobar.type, origin: infobar.origin, perms: infobar.perms, url: infobar.url, host: infobar.host } : null,
-      modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null } : null,
+      modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null, seq: this.modal._seq } : null,
       downloads: ctl.downloads.summary(this.incognito),
       closedCount: this.closedTabs.length,
       split: this.split ? this.split.ids : null,
