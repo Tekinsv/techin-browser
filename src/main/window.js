@@ -1017,9 +1017,12 @@ class TechinWindow {
     const leave = !on && this.win.isFullScreen() && !this.focusMode;
     if (enter || leave) this.animateFullScreen(!!enter);
     else if (this.curtainUp && !this._fsBusy) {
-      // The window was already fullscreen (F11): nothing to hide, lift the curtain now.
+      // No window switch needed (F11 was on, or the window already changed): lift the
+      // curtain once the page shows its new layout.
       clearTimeout(this._preCurtainTimer);
-      this._curtainFade(false, 200);
+      this._waitPageSettled(this.activeTab(), on, this._fsBeforeHeight || 0).then(() => {
+        if (!this._fsBusy && this.curtainUp) this._curtainFade(false, 230);
+      });
     }
     this.layout();
   }
@@ -1054,7 +1057,10 @@ class TechinWindow {
     this.sendEvent('curtain', { phase: 'fade', on, ms });
     if (!on) this.curtainBlack = false;
     await new Promise((r) => setTimeout(r, ms + 30));
-    if (on) this.curtainBlack = true;
+    if (on) {
+      this.curtainBlack = true;
+      this._curtainBlackAt = Date.now();
+    }
     if (!on && !this.win.isDestroyed()) {
       this.curtainUp = false;
       this.uiOnTop = true; // syncViews() puts the pages back on top where they belong
@@ -1066,6 +1072,30 @@ class TechinWindow {
 
   onCurtainReady() {
     if (this._curtainReady) this._curtainReady();
+  }
+
+  _pageHeight(tab) {
+    if (!tab || !tab.alive) return Promise.resolve(0);
+    return Promise.race([tab.wc.executeJavaScript('innerHeight').catch(() => 0), new Promise((r) => setTimeout(() => r(0), 150))]);
+  }
+
+  async _waitPageSettled(tab, entering, before) {
+    const start = Date.now();
+    if (tab && tab.alive && before) {
+      const js = `new Promise((done) => {
+        const t0 = performance.now();
+        (function check() {
+          const fs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+          const sized = ${entering} ? innerHeight > ${before} + 20 : innerHeight < ${before} - 20;
+          if ((fs === ${entering} && sized) || performance.now() - t0 > 900) requestAnimationFrame(() => requestAnimationFrame(() => done(true)));
+          else requestAnimationFrame(check);
+        })();
+      })`;
+      await Promise.race([tab.wc.executeJavaScript(js).catch(() => {}), new Promise((r) => setTimeout(r, 1100))]);
+    }
+    const held = Date.now() - (this._curtainBlackAt || 0);
+    if (held < 180) await new Promise((r) => setTimeout(r, 180 - held));
+    return Date.now() - start;
   }
 
   _waitFullScreen(target) {
@@ -1094,9 +1124,15 @@ class TechinWindow {
         // Already black if the page announced it (see beforeHtmlFullscreen): no second fade.
         clearTimeout(this._preCurtainTimer);
         if (!this.curtainBlack) await this._curtainFade(true, target ? 150 : 110);
+        const tab = this.activeTab();
+        const before = await this._pageHeight(tab);
         this.win.setFullScreen(target);
         await this._waitFullScreen(target);
         this.layout();
+        // Lift the curtain only once the page itself shows its new layout (YouTube
+        // draws its fullscreen player a few frames after the window changed size),
+        // and stay dark a moment like Firefox does.
+        await this._waitPageSettled(tab, target, before);
         await this._curtainFade(false, 230);
       }
     } catch {
@@ -1115,6 +1151,7 @@ class TechinWindow {
     const now = Date.now();
     if (this._fsBusy || this.curtainUp || now - (this._lastFsIntent || 0) < 400) return;
     this._lastFsIntent = now;
+    this._fsBeforeHeight = await this._pageHeight(this.activeTab());
     await this._curtainFade(true, 140);
     clearTimeout(this._preCurtainTimer);
     this._preCurtainTimer = setTimeout(() => {
