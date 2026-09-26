@@ -1013,14 +1013,21 @@ class TechinWindow {
 
   setHtmlFullscreen(tab, on) {
     this.htmlFullscreen = on ? tab.id : null;
-    if (on && !this.win.isFullScreen()) this.animateFullScreen(true);
-    if (!on && this.win.isFullScreen() && !this.focusMode) this.animateFullScreen(false);
+    const enter = on && !this.win.isFullScreen();
+    const leave = !on && this.win.isFullScreen() && !this.focusMode;
+    if (enter || leave) this.animateFullScreen(!!enter);
+    else if (this.curtainUp && !this._fsBusy) {
+      // The window was already fullscreen (F11): nothing to hide, lift the curtain now.
+      clearTimeout(this._preCurtainTimer);
+      this._curtainFade(false, 200);
+    }
     this.layout();
   }
 
   toggleFocusMode() {
+    // The browser's own F11: a plain switch (the curtain is only for videos going fullscreen).
     this.focusMode = !this.focusMode;
-    this.animateFullScreen(this.focusMode);
+    this.win.setFullScreen(this.focusMode);
     this.layout();
   }
 
@@ -1045,7 +1052,9 @@ class TechinWindow {
       this.uiOnTop = true;
     }
     this.sendEvent('curtain', { phase: 'fade', on, ms });
+    if (!on) this.curtainBlack = false;
     await new Promise((r) => setTimeout(r, ms + 30));
+    if (on) this.curtainBlack = true;
     if (!on && !this.win.isDestroyed()) {
       this.curtainUp = false;
       this.uiOnTop = true; // syncViews() puts the pages back on top where they belong
@@ -1082,7 +1091,9 @@ class TechinWindow {
     try {
       while (!this.win.isDestroyed() && this.win.isFullScreen() !== this._fsTarget) {
         const target = this._fsTarget;
-        await this._curtainFade(true, target ? 150 : 110);
+        // Already black if the page announced it (see beforeHtmlFullscreen): no second fade.
+        clearTimeout(this._preCurtainTimer);
+        if (!this.curtainBlack) await this._curtainFade(true, target ? 150 : 110);
         this.win.setFullScreen(target);
         await this._waitFullScreen(target);
         this.layout();
@@ -1095,8 +1106,24 @@ class TechinWindow {
     }
   }
 
+  /**
+   * A page is about to enter/leave fullscreen (page.js holds its request for a
+   * moment): fade to black first, like Firefox, so the switch itself is hidden.
+   * If the page then doesn't switch after all, the curtain lifts on its own.
+   */
+  async beforeHtmlFullscreen() {
+    const now = Date.now();
+    if (this._fsBusy || this.curtainUp || now - (this._lastFsIntent || 0) < 400) return;
+    this._lastFsIntent = now;
+    await this._curtainFade(true, 140);
+    clearTimeout(this._preCurtainTimer);
+    this._preCurtainTimer = setTimeout(() => {
+      if (!this._fsBusy && this.curtainUp) this._curtainFade(false, 200);
+    }, 1500);
+  }
+
   toggleMaximize() {
-    if (this.win.isFullScreen()) this.animateFullScreen(false);
+    if (this.win.isFullScreen()) this.win.setFullScreen(false);
     else if (this.win.isMaximized()) this.win.unmaximize();
     else this.win.maximize();
   }

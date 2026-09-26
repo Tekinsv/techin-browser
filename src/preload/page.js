@@ -177,29 +177,96 @@ if (IS_YOUTUBE) {
 // button) must not start playing video/audio on its own: nothing plays until the
 // user has interacted with that page (clicked, pressed a key). Sites treat it as
 // a blocked autoplay and show their play button. Pages opened normally are untouched.
+// navigator.userActivation can't be trusted for this: pages loaded by the browser
+// (as these tabs are) already report hasBeenActive = true. So both worlds count
+// real (trusted) clicks and key presses on the page themselves.
 if (document.visibilityState === 'hidden' && /^https?:$/.test(location.protocol)) {
-  const allowed = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
+  let interacted = false;
+  const mark = (e) => {
+    if (e.isTrusted) interacted = true;
+  };
+  for (const t of ['pointerdown', 'keydown', 'touchstart']) addEventListener(t, mark, { capture: true, passive: true });
   inMain(() => {
+    let ok = false;
+    const markMain = (e) => {
+      if (e.isTrusted) ok = true;
+    };
+    for (const t of ['pointerdown', 'keydown', 'touchstart']) addEventListener(t, markMain, { capture: true, passive: true });
     const proto = HTMLMediaElement.prototype;
     const play = proto.play;
-    const allowedMain = () => !!(navigator.userActivation && navigator.userActivation.hasBeenActive);
     try {
       Object.defineProperty(proto, 'play', {
         configurable: true,
         writable: true,
         value: function () {
-          if (allowedMain()) return play.apply(this, arguments);
+          if (ok) return play.apply(this, arguments);
           return Promise.reject(new DOMException('Playback waits until you interact with this tab', 'NotAllowedError'));
         }
       });
     } catch (e) {}
   });
-  // The autoplay attribute doesn't go through play(): stop it as it starts.
+  // The autoplay attribute (and players that got play() before us) don't go
+  // through the override: stop them as they start.
   const hold = (e) => {
-    if (!allowed() && e.target instanceof HTMLMediaElement) e.target.pause();
+    if (!interacted && e.target instanceof HTMLMediaElement) e.target.pause();
   };
   document.addEventListener('play', hold, true);
   document.addEventListener('playing', hold, true);
+}
+
+// ------------------------------------------------------------ 3c) fullscreen like Firefox
+// When a site puts a video into fullscreen (double-click, its fullscreen button)
+// its request is held for a moment while the window fades to black; then the
+// switch happens unseen and the black fades away. The token keeps other page
+// scripts from triggering the fade on their own.
+if (/^https?:$/.test(location.protocol)) {
+  const token = 'techin-fs-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  document.addEventListener(token, () => {
+    const go = () => document.dispatchEvent(new CustomEvent(token + '-go'));
+    ipcRenderer.invoke('techin:fs-intent').then(go, go);
+  });
+  inMain((token) => {
+    const wrap = (proto, name, exit) => {
+      const orig = proto && proto[name];
+      if (typeof orig !== 'function') return;
+      try {
+        Object.defineProperty(proto, name, {
+          configurable: true,
+          writable: true,
+          value: function (...args) {
+            const self = this;
+            const current = document.fullscreenElement || document.webkitFullscreenElement;
+            // Nothing to animate (already in / already out): straight through.
+            if (exit ? !current : current) return orig.apply(self, args);
+            return new Promise((resolve, reject) => {
+              let started = false;
+              const go = () => {
+                if (started) return;
+                started = true;
+                document.removeEventListener(token + '-go', go);
+                try {
+                  const r = orig.apply(self, args);
+                  if (r && typeof r.then === 'function') r.then(resolve, reject);
+                  else resolve(r);
+                } catch (err) {
+                  reject(err);
+                }
+              };
+              document.addEventListener(token + '-go', go);
+              setTimeout(go, 600); // never hold a page longer than this
+              document.dispatchEvent(new CustomEvent(token));
+            });
+          }
+        });
+      } catch (e) {}
+    };
+    wrap(Element.prototype, 'requestFullscreen', false);
+    wrap(Element.prototype, 'webkitRequestFullscreen', false);
+    wrap(Element.prototype, 'webkitRequestFullScreen', false);
+    wrap(Document.prototype, 'exitFullscreen', true);
+    wrap(Document.prototype, 'webkitExitFullscreen', true);
+    wrap(Document.prototype, 'webkitCancelFullScreen', true);
+  }, token);
 }
 
 // ------------------------------------------------------------ 4) passwords

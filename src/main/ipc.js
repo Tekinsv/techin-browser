@@ -249,6 +249,15 @@ function installIpc(ctl) {
     return result === undefined || typeof result === 'boolean' || result === null || typeof result === 'object' ? result ?? null : null;
   });
 
+  // A page announces it is about to enter/leave fullscreen (src/preload/page.js):
+  // the window fades to black first. Only the active tab of a window may do this.
+  ipcMain.handle('techin:fs-intent', async (event) => {
+    const tab = ctl.tabByWcId(event.sender.id);
+    if (!tab || !tab.isActive() || tab.win.win.isDestroyed()) return false;
+    await tab.win.beforeHtmlFullscreen();
+    return true;
+  });
+
   // Page crashes aside, the UI must never be able to reach anything else.
   ipcMain.on('techin:log', (event, msg) => {
     if (ctl.windowForUi(event.sender) && typeof msg === 'string') console.log('[ui]', msg.slice(0, 500));

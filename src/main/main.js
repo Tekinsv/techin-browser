@@ -66,6 +66,9 @@ const { openPopup } = require('./popup');
 const { TechinWindow } = require('./window');
 const { Updater } = require('./updater');
 const { Passwords, sanitizePasswords } = require('./passwords');
+const sessionCookies = require('./sessioncookies');
+
+const sessionCookieFile = () => path.join(USER_DATA, 'session-cookies.bin'); // USER_DATA is set further down
 const { ASKABLE } = require('./policy');
 const { ZOOM_STEPS } = require('./tab');
 const { SEARCH_ENGINES, buildSearchUrl, originOf, normalizeInput, safeURL } = require('./url');
@@ -276,7 +279,15 @@ class Controller {
       const mod = !app.isPackaged && process.env.TECHIN_SELFTEST_MODULE ? path.resolve(process.env.TECHIN_SELFTEST_MODULE) : './selftest';
       return require(mod).run(this);
     }
+    if (this.keepsSessionCookies()) await sessionCookies.restoreSessionCookies(session.defaultSession, sessionCookieFile()).catch(() => 0);
+    else sessionCookies.forget(sessionCookieFile());
     this.openInitialWindows(argUrls(process.argv.slice(app.isPackaged ? 1 : 2)));
+  }
+
+  /** Like Chrome: with "continue where you left off" session cookies survive a restart. */
+  keepsSessionCookies() {
+    const s = this.settings.data;
+    return s.startup === 'restore' && !s.clearOnExit && !SELFTEST;
   }
 
   hardenUiSession() {
@@ -393,6 +404,16 @@ class Controller {
     this.saveSessionNow();
     this.sessionFrozen = true;
     this.flushStores();
+    if (this.keepsSessionCookies()) {
+      // Cookies can only be read asynchronously: hold the quit until they're written (max 1.5 s).
+      e.preventDefault();
+      const done = () => setImmediate(() => app.quit());
+      Promise.race([sessionCookies.saveSessionCookies(session.defaultSession, sessionCookieFile()), new Promise((r) => setTimeout(r, 1500))])
+        .catch(() => {})
+        .finally(done);
+      return;
+    }
+    sessionCookies.forget(sessionCookieFile());
     if (this.settings.data.clearOnExit && !this.updating) {
       e.preventDefault();
       this.clearBrowsingData(['history', 'cookies', 'cache'], 'all')

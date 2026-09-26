@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const os = require('node:os');
-const { app, desktopCapturer } = require('electron');
+const { app, desktopCapturer, session } = require('electron');
 const palette = require('./palette');
 
 const OUT_DIR = process.env.TECHIN_SELFTEST_OUT || path.join(os.tmpdir(), 'techin-selftest-out');
@@ -40,6 +40,7 @@ function startServer() {
     '/welcome': '<!doctype html><title>Welcome</title><h1>Hoş geldin</h1>',
     // Icon that arrives slowly while the page rewrites its URL (like YouTube): the tab must keep the icon.
     '/favpage': '<!doctype html><title>Fav</title><link rel="icon" href="/fav.png"><script>setTimeout(() => history.replaceState(null, "", "/favpage?pp=1"), 60)</script><h1>icon</h1>',
+    '/fs': '<!doctype html><title>FS</title><button id="b" style="margin:40px;font-size:24px" onclick="document.documentElement.requestFullscreen()">tam ekran</button>',
     '/media': '<!doctype html><title>Media</title><audio id="a" autoplay src="/tone.wav"></audio>',
     '/medialink': '<!doctype html><title>MediaLinks</title><a id="l" href="/media" style="display:block;padding:40px;font-size:30px">ses</a>',
     '/favlink': '<!doctype html><title>Links</title><a id="l" href="/favpage" style="display:block;padding:40px;font-size:30px">bağlantı</a>',
@@ -480,21 +481,44 @@ async function run(ctl) {
       // #e11d48 = rgb(225, 29, 72); the browser may report it as hsl() or rgb()
       ok('Alan rengi serbestçe seçilebiliyor (renk seçici)', /hsl\(350 |rgb\(22[4-7], (2[89]|30), 7[1-3]\)/.test(g1), g1);
 
-      // Firefox-like fullscreen transition: curtain up, switch, curtain gone, page back on top
+      // F11 is a plain switch; a video/page going fullscreen fades to black FIRST (Firefox-like)
       const events = [];
       const origSend = w.sendEvent.bind(w);
+      const origHtml = w.setHtmlFullscreen.bind(w);
       w.sendEvent = (n, d) => {
         if (n === 'curtain') events.push(d.phase + (d.phase === 'fade' ? (d.on ? '+' : '-') : ''));
         return origSend(n, d);
       };
+      w.setHtmlFullscreen = (t, on) => {
+        events.push(on ? 'PAGE-IN' : 'PAGE-OUT');
+        return origHtml(t, on);
+      };
       w.toggleFocusMode();
-      const fsOn = await waitFor(() => w.win.isFullScreen() && !w._fsBusy, 3000, 50);
+      const f11On = await waitFor(() => w.win.isFullScreen(), 3000, 50);
       w.toggleFocusMode();
-      const fsOff = await waitFor(() => !w.win.isFullScreen() && !w._fsBusy, 3000, 50);
+      const f11Off = await waitFor(() => !w.win.isFullScreen(), 3000, 50);
+      await sleep(300);
+      const f11Quiet = events.length === 0;
+      const ft = w.createTab({ url: base + '/fs' });
+      await loaded(ft, 10000);
+      await sleep(300);
+      const fb = await ft.wc.executeJavaScript("(() => { const r = document.getElementById('b').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
+      ft.wc.focus();
+      for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+        ft.wc.sendInputEvent({ type, x: fb.x, y: fb.y, button: 'left', clickCount: 1 });
+        await sleep(40);
+      }
+      const pageOn = await waitFor(() => w.win.isFullScreen() && !w._fsBusy && !w.curtainUp, 4000, 50);
+      await sleep(700); // like a person watching for a moment before leaving fullscreen
+      await ft.wc.executeJavaScript('document.exitFullscreen().then(() => true)', true).catch(() => null);
+      const pageOff = await waitFor(() => !w.win.isFullScreen() && !w._fsBusy && !w.curtainUp, 4000, 50);
       await sleep(200);
       w.sendEvent = origSend;
+      w.setHtmlFullscreen = origHtml;
+      ft.close({ force: true });
+      w.activateTab(tab.id);
       const seq = events.join(' ');
-      ok('Tam ekrana geçişte Firefox gibi kararma geçişi var', !!fsOn && !!fsOff && /^prep fade\+ fade-.* prep fade\+ fade- done$/.test(seq) && !w.uiOnTop && !w.curtainUp, seq);
+      ok('F11 düz tam ekran; video tam ekranında önce kararıyor sonra geçiyor (Firefox gibi)', !!f11On && !!f11Off && f11Quiet && !!pageOn && !!pageOff && /^prep fade\+ PAGE-IN fade- (done )?prep fade\+ PAGE-OUT fade- done$/.test(seq) && !w.uiOnTop, seq);
 
       // auto-hidden sidebar: thin edge, floats over the page on hover
       ctl.setSetting('sidebarAutoHide', true);
@@ -543,12 +567,35 @@ async function run(ctl) {
         w.activateTab(bgm.id);
         await sleep(600);
         const stillHeld = await bgm.wc.executeJavaScript("document.getElementById('a').paused");
-        userPlay = stillHeld && (await bgm.wc.executeJavaScript("document.getElementById('a').play().then(() => 'played').catch((e) => e.name)", true));
+        const scripted = await bgm.wc.executeJavaScript("document.getElementById('a').play().then(() => 'played').catch((e) => e.name)");
+        // a real click in the page (like pressing the site's play button) unlocks playback
+        bgm.wc.focus();
+        for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+          bgm.wc.sendInputEvent({ type, x: 60, y: 60, button: 'left', clickCount: 1 });
+          await sleep(40);
+        }
+        const clicked = await bgm.wc.executeJavaScript("document.getElementById('a').play().then(() => 'played').catch((e) => e.name)");
+        userPlay = stillHeld && scripted === 'NotAllowedError' ? clicked : `held=${stillHeld} scripted=${scripted}`;
         bgm.close({ force: true });
       }
       mt.close({ force: true });
       w.activateTab(tab.id);
       ok('Arka planda açılan sekmede video/ses kendiliğinden başlamıyor, oynat deyince başlıyor', held === true && quiet === true && userPlay === 'played', JSON.stringify({ held, quiet, userPlay }));
+    }
+
+    // --- session cookies (e.g. YouTube's theater mode "wide=1") survive a restart, encrypted on disk
+    {
+      const sc = require('./sessioncookies');
+      const ses = session.fromPartition('techin-selftest-cookies');
+      const file = path.join(OUT_DIR, 'session-cookies-test.bin');
+      await ses.cookies.set({ url: 'https://www.youtube.com/', name: 'wide', value: '1', domain: '.youtube.com', secure: true });
+      await ses.cookies.set({ url: 'https://example.com/', name: 'keep', value: 'x', expirationDate: Math.floor(Date.now() / 1000) + 3600 });
+      const saved = await sc.saveSessionCookies(ses, file);
+      const raw = fs.readFileSync(file);
+      await ses.clearStorageData({ storages: ['cookies'] });
+      const restored = await sc.restoreSessionCookies(ses, file);
+      const back = await ses.cookies.get({ name: 'wide' });
+      ok('Oturum çerezleri (ör. YouTube sinema modu) yeniden açılışta geri geliyor, diskte şifreli', saved === 1 && restored === 1 && back.length === 1 && back[0].value === '1' && back[0].session && !raw.includes('wide') && !fs.existsSync(file), JSON.stringify({ saved, restored, session: back[0] && back[0].session }));
     }
 
     // --- a local HTML file must not read other local files (the file:// fuse
