@@ -362,22 +362,35 @@ class Controller {
    * window already there takes it; otherwise a new window opens there, fullscreen.
    */
   openTabOnDisplay(win, tabId, displayId) {
+    if (!win.tabs.has(tabId)) return null;
+    const target = this._windowOnDisplay(win, displayId);
+    return target ? win.moveTabToWindow(tabId, target) : null;
+  }
+
+  /** Same for a pinned / favorite item: its open page moves; if it isn't open, it opens there. */
+  openItemOnDisplay(win, itemId, displayId) {
+    const found = this.library.find(itemId);
+    if (!found) return null;
+    const tab = win.tabForRef(itemId);
+    if (tab) return this.openTabOnDisplay(win, tab.id, displayId);
+    const target = this._windowOnDisplay(win, displayId);
+    return target ? target.openUrl(found.item.url, { newTab: true }) : null;
+  }
+
+  /** The Techin window on that screen, or a new fullscreen one placed there. */
+  _windowOnDisplay(win, displayId) {
     const d = electron.screen.getAllDisplays().find((x) => x.id === displayId);
-    if (!d || !win.tabs.has(tabId)) return null;
-    const onThere = [...this.windows].find((w) => w !== win && !w.win.isDestroyed() && w.incognito === win.incognito && electron.screen.getDisplayMatching(w.win.getBounds()).id === d.id);
-    let target = onThere;
-    if (!target) {
-      const a = d.workArea;
-      const width = Math.min(1440, a.width - 80);
-      const height = Math.min(920, a.height - 80);
-      target = this.newWindow({ incognito: win.incognito, sideScreen: true, bounds: { x: a.x + Math.round((a.width - width) / 2), y: a.y + Math.round((a.height - height) / 2), width, height } });
+    if (!d) return null;
+    const there = [...this.windows].find((w) => w !== win && !w.win.isDestroyed() && w.incognito === win.incognito && electron.screen.getDisplayMatching(w.win.getBounds()).id === d.id);
+    if (there) {
+      if (there.win.isMinimized()) there.win.restore();
+      there.win.focus();
+      return there;
     }
-    const tab = win.moveTabToWindow(tabId, target);
-    if (onThere) {
-      if (onThere.win.isMinimized()) onThere.win.restore();
-      onThere.win.focus();
-    }
-    return tab;
+    const a = d.workArea;
+    const width = Math.min(1440, a.width - 80);
+    const height = Math.min(920, a.height - 80);
+    return this.newWindow({ incognito: win.incognito, sideScreen: true, bounds: { x: a.x + Math.round((a.width - width) / 2), y: a.y + Math.round((a.height - height) / 2), width, height } });
   }
 
   lastWindow() {

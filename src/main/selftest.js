@@ -607,6 +607,22 @@ async function run(ctl) {
         if (w.tabs.has(st.id)) st.close({ force: true });
         w.activateTab(tab.id);
         ok('Sekme yan ekranda tam ekran açılıyor, sayfa yeniden yüklenmiyor; geri gönderilebiliyor', !!(shown && onOther && same && moved && back && closed), JSON.stringify({ shown: !!shown, onOther, same: !!same, moved, back, closed: !!closed }));
+
+        // the same from a favorite at the bottom of the sidebar, while its page is closed
+        const favTab = w.createTab({ url: base + '/b' });
+        await loaded(favTab, 10000);
+        w.pinTab(favTab.id, 'favorite');
+        const itemId = favTab.refId;
+        favTab.close({ force: true });
+        const opened = itemId ? ctl.openItemOnDisplay(w, itemId, others[0].id) : null;
+        const side2 = [...ctl.windows].find((x) => x !== w && x.sideScreen && !x.win.isDestroyed());
+        const favOk = !!opened && !!side2 && opened.win === side2 && (await waitFor(() => opened.url.startsWith(base + '/b'), 5000, 100));
+        if (side2) side2.win.close();
+        if (itemId) w.unpinItem(itemId, 0);
+        await sleep(300);
+        for (const t2 of [...w.tabs.values()]) if (t2.url.startsWith(base + '/b')) t2.close({ force: true });
+        w.activateTab(tab.id);
+        ok('Sık kullanılan / sabitlenmiş siteler de yan ekranda açılabiliyor', !!favOk, JSON.stringify({ opened: !!opened, side: !!side2 }));
       }
     }
 

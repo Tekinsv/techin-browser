@@ -180,13 +180,7 @@ class Menus {
       .map((sp) => ({ label: `${sp.icon ? sp.icon + '  ' : ''}${sp.name}`, click: () => win.moveTabToSpace(tab.id, sp.id) }));
     const list = win.spaceTabs(tab.spaceId);
     const below = list.slice(list.indexOf(tab) + 1);
-    // Other monitors: move the tab there (a new fullscreen window, or the Techin window already there).
-    const screens = this.ctl.otherDisplays(win).map((d, i) => ({
-      label: d.label || `${t('Ekran')} ${i + 2}  (${d.size.width}×${d.size.height})`,
-      click: () => this.ctl.openTabOnDisplay(win, tab.id, d.id)
-    }));
-    const sideLabel = win.sideScreen ? t('Diğer ekrana geri gönder') : t('Yan ekranda aç (tam ekran)');
-    const sideItems = screens.length === 1 ? [{ label: sideLabel, click: screens[0].click }] : screens.length > 1 ? [{ label: sideLabel, submenu: screens }] : [];
+    const sideItems = this.sideScreenItems(win, (id) => this.ctl.openTabOnDisplay(win, tab.id, id));
     this.popup(win, [
       { label: t('Yenile'), click: () => tab.reload() },
       { label: t('Çoğalt'), click: () => win.duplicateTab(tab.id) },
@@ -206,6 +200,14 @@ class Menus {
     ]);
   }
 
+  /** "Open on the other screen": one item for two monitors, a submenu for more, nothing for one. */
+  sideScreenItems(win, open) {
+    const t = this.t.bind(this);
+    const screens = this.ctl.otherDisplays(win).map((d, i) => ({ label: d.label || `${t('Ekran')} ${i + 2}  (${d.size.width}×${d.size.height})`, click: () => open(d.id) }));
+    const label = win.sideScreen ? t('Diğer ekrana geri gönder') : t('Yan ekranda aç (tam ekran)');
+    return screens.length === 1 ? [{ label, click: screens[0].click }] : screens.length > 1 ? [{ label, submenu: screens }] : [];
+  }
+
   itemMenu(win, itemId) {
     const found = this.ctl.library.find(itemId);
     if (!found) return;
@@ -214,6 +216,7 @@ class Menus {
     const fav = found.kind === 'favorite';
     this.popup(win, [
       { label: t('Aç'), click: () => win.openItem(itemId) },
+      ...this.sideScreenItems(win, (id) => this.ctl.openItemOnDisplay(win, itemId, id)),
       { label: t('Sabit adrese dön'), enabled: !!tab, click: () => win.resetItem(itemId) },
       { label: t('Yeniden adlandır'), visible: !fav, click: () => win.sendEvent('rename-item', { id: itemId }) },
       { label: t('Adresi bu sayfayla değiştir'), enabled: !!tab && tab.url !== found.item.url, click: () => this.ctl.library.updateItem(itemId, { url: tab.url }) },
