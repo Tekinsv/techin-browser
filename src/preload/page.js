@@ -649,6 +649,17 @@ if (FLAG_SMOOTH) {
     const target = isRoot(el) ? window : el;
     target.scrollTo({ top: y, behavior: 'instant' });
   };
+  /**
+   * Scroll range of a container. Chat boxes (Instagram DMs, WhatsApp Web...) use
+   * flex-direction: column-reverse, where the newest message is at scrollTop 0 and
+   * older ones are at NEGATIVE positions; clamping to 0..max snapped them back to
+   * the bottom on every notch.
+   */
+  const scrollRange = (el) => {
+    const span = maxTop(el);
+    if (!isRoot(el) && (el.scrollTop < 0 || getComputedStyle(el).flexDirection === 'column-reverse')) return { min: -span, max: 0 };
+    return { min: 0, max: span };
+  };
 
   function scrollable(el, dy) {
     if (isRoot(el)) {
@@ -661,7 +672,8 @@ if (FLAG_SMOOTH) {
       if (el.scrollHeight <= el.clientHeight + 1) return false;
     }
     const top = getTop(el);
-    return dy > 0 ? top < maxTop(el) - 1 : top > 0;
+    const r = scrollRange(el);
+    return dy > 0 ? top < r.max - 1 : top > r.min + 1;
   }
 
   function findScroller(e, dy) {
@@ -858,7 +870,8 @@ if (FLAG_SMOOTH) {
         }
       } else {
         const base = anim && anim.el === el ? anim.to : getTop(el);
-        to = Math.max(0, Math.min(maxTop(el), base + dy));
+        const r = scrollRange(el);
+        to = Math.max(r.min, Math.min(r.max, base + dy));
       }
       e.preventDefault();
       animate(el, to, snap ? SNAP_DURATION : DURATION, !!snap);

@@ -40,6 +40,8 @@ function startServer() {
     '/welcome': '<!doctype html><title>Welcome</title><h1>Hoş geldin</h1>',
     // Icon that arrives slowly while the page rewrites its URL (like YouTube): the tab must keep the icon.
     '/favpage': '<!doctype html><title>Fav</title><link rel="icon" href="/fav.png"><script>setTimeout(() => history.replaceState(null, "", "/favpage?pp=1"), 60)</script><h1>icon</h1>',
+    // a chat like Instagram DMs: newest message at the bottom, scroller is flex column-reverse
+    '/chat': '<!doctype html><title>Chat</title><style>body{margin:0}#c{height:400px;width:420px;overflow-y:auto;display:flex;flex-direction:column-reverse;font:16px system-ui}#c div{padding:14px;border-bottom:1px solid #ccc}</style><div id="c">' + Array.from({ length: 80 }, (_, i) => '<div>mesaj ' + (80 - i) + '</div>').join('') + '</div>',
     '/fs': '<!doctype html><title>FS</title><button id="b" style="margin:40px;font-size:24px" onclick="document.documentElement.requestFullscreen()">tam ekran</button>',
     '/media': '<!doctype html><title>Media</title><audio id="a" autoplay src="/tone.wav"></audio>',
     '/medialink': '<!doctype html><title>MediaLinks</title><a id="l" href="/media" style="display:block;padding:40px;font-size:30px">ses</a>',
@@ -624,6 +626,30 @@ async function run(ctl) {
         w.activateTab(tab.id);
         ok('Sık kullanılan / sabitlenmiş siteler de yan ekranda açılabiliyor', !!favOk, JSON.stringify({ opened: !!opened, side: !!side2 }));
       }
+    }
+
+    // --- wheel in a reversed chat box (Instagram DMs) must not jump back to the newest message
+    {
+      const ct = w.createTab({ url: base + '/chat' });
+      await loaded(ct, 10000);
+      await sleep(300);
+      const top = () => ct.wc.executeJavaScript("Math.round(document.getElementById('c').scrollTop)");
+      const wheel = async (down, n) => {
+        ct.wc.focus();
+        for (let i = 0; i < n; i++) {
+          ct.wc.sendInputEvent({ type: 'mouseWheel', x: 200, y: 200, deltaX: 0, deltaY: down ? -100 : 100, wheelTicksX: 0, wheelTicksY: down ? -1 : 1, canScroll: true, hasPreciseScrollingDeltas: false });
+          await sleep(120);
+        }
+        await sleep(700);
+      };
+      const t0 = await top();
+      await wheel(false, 4); // up into older messages
+      const tUp = await top();
+      await wheel(true, 1); // one notch back down
+      const tDown = await top();
+      ct.close({ force: true });
+      w.activateTab(tab.id);
+      ok('Instagram sohbeti gibi ters kutuda yukarı kaydırma geri alta atlamıyor', t0 === 0 && tUp < -200 && tDown < tUp + 250 && tDown < -50, JSON.stringify({ t0, tUp, tDown }));
     }
 
     // --- session cookies (e.g. YouTube's theater mode "wide=1") survive a restart, encrypted on disk
