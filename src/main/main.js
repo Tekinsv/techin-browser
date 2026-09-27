@@ -343,12 +343,41 @@ class Controller {
 
   // ------------------------------------------------------------ windows
 
-  newWindow({ incognito = false, urls = [], restore = null } = {}) {
+  newWindow({ incognito = false, urls = [], restore = null, bounds = null, sideScreen = false } = {}) {
     if (!incognito) this.sessionFrozen = false;
-    const w = new TechinWindow(this, { incognito, restore, urls });
+    const w = new TechinWindow(this, { incognito, restore, urls, bounds, sideScreen });
     this.windows.add(w);
     this.lastFocused = w;
     return w;
+  }
+
+  /** Screens other than the one this window is on (for "open on the other screen"). */
+  otherDisplays(win) {
+    const here = electron.screen.getDisplayMatching(win.win.getBounds());
+    return electron.screen.getAllDisplays().filter((d) => d.id !== here.id);
+  }
+
+  /**
+   * Moves a tab (live: a playing video keeps playing) to another electron.screen. A Techin
+   * window already there takes it; otherwise a new window opens there, fullscreen.
+   */
+  openTabOnDisplay(win, tabId, displayId) {
+    const d = electron.screen.getAllDisplays().find((x) => x.id === displayId);
+    if (!d || !win.tabs.has(tabId)) return null;
+    const onThere = [...this.windows].find((w) => w !== win && !w.win.isDestroyed() && w.incognito === win.incognito && electron.screen.getDisplayMatching(w.win.getBounds()).id === d.id);
+    let target = onThere;
+    if (!target) {
+      const a = d.workArea;
+      const width = Math.min(1440, a.width - 80);
+      const height = Math.min(920, a.height - 80);
+      target = this.newWindow({ incognito: win.incognito, sideScreen: true, bounds: { x: a.x + Math.round((a.width - width) / 2), y: a.y + Math.round((a.height - height) / 2), width, height } });
+    }
+    const tab = win.moveTabToWindow(tabId, target);
+    if (onThere) {
+      if (onThere.win.isMinimized()) onThere.win.restore();
+      onThere.win.focus();
+    }
+    return tab;
   }
 
   lastWindow() {

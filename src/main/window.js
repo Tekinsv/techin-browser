@@ -27,7 +27,7 @@ function validBounds(b) {
 }
 
 class TechinWindow {
-  constructor(ctl, { incognito = false, restore = null, urls = [] } = {}) {
+  constructor(ctl, { incognito = false, restore = null, urls = [], bounds: placed = null, sideScreen = false } = {}) {
     this.ctl = ctl;
     this.id = newId('w');
     this.incognito = incognito;
@@ -52,7 +52,10 @@ class TechinWindow {
 
     const s = ctl.settings.data;
     const area = screen.getPrimaryDisplay().workArea;
-    const bounds = validBounds(restore?.bounds) || {
+    // A window opened for "open on the other screen": placed there, fullscreen once shown,
+    // closes itself when its last tab is gone.
+    this.sideScreen = sideScreen;
+    const bounds = validBounds(placed) || validBounds(restore?.bounds) || {
       width: Math.min(1440, Math.round(area.width * 0.86)),
       height: Math.min(920, Math.round(area.height * 0.88))
     };
@@ -187,6 +190,44 @@ class TechinWindow {
     if (this.win.isDestroyed() || this.win.isVisible()) return;
     this.win.show();
     this.win.focus();
+    if (this.sideScreen && !this.win.isFullScreen()) {
+      this.focusMode = true;
+      this.win.setFullScreen(true);
+      this.layout();
+    }
+  }
+
+  /** Moves a live tab (its page keeps running: a video keeps playing) into another window. */
+  moveTabToWindow(tabId, target) {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !target || target === this || target.incognito !== this.incognito || target.win.isDestroyed()) return null;
+    const wasActive = this.activeTabId === tabId;
+    const next = wasActive ? this._pickNextAfterClose(tab) : null;
+    if (this.split && this.split.ids.includes(tabId)) this.split = null;
+    this.detachTabView(tab);
+    this.tabs.delete(tabId);
+    const oi = this.order.indexOf(tabId);
+    if (oi >= 0) this.order.splice(oi, 1);
+    this.dismissInfobar((b) => b.tabId === tabId);
+    for (const [sp, tid] of Object.entries(this.activeBySpace)) if (tid === tabId) delete this.activeBySpace[sp];
+    // Pinned/favorite items stay in this window's sidebar; the moved page becomes a normal tab.
+    tab.kind = 'normal';
+    tab.refId = null;
+    tab.win = target;
+    tab.spaceId = target.activeSpaceId;
+    target.tabs.set(tab.id, tab);
+    target.order.unshift(tab.id);
+    if (tab.view) target.applyViewStyle(tab.view);
+    target.activateTab(tab.id);
+    if (wasActive) {
+      this.activeTabId = null;
+      if (next && this.tabs.has(next.id)) this.activateTab(next.id);
+      else this.syncViews();
+    }
+    this.scheduleState();
+    this.ctl.saveSessionSoon();
+    if (this.sideScreen && !this.tabs.size) setTimeout(() => !this.win.isDestroyed() && this.win.close(), 50);
+    return tab;
   }
 
   // ------------------------------------------------------------ lookup
@@ -516,6 +557,8 @@ class TechinWindow {
     }
     this.scheduleState();
     this.ctl.saveSessionSoon();
+    // The window opened on the other screen goes away with its last tab.
+    if (this.sideScreen && !this.tabs.size) setTimeout(() => !this.win.isDestroyed() && this.win.close(), 50);
   }
 
   _pickNextAfterClose(tab) {

@@ -583,6 +583,33 @@ async function run(ctl) {
       ok('Arka planda açılan sekmede video/ses kendiliğinden başlamıyor, oynat deyince başlıyor', held === true && quiet === true && userPlay === 'played', JSON.stringify({ held, quiet, userPlay }));
     }
 
+    // --- "open on the other screen": the live tab moves to a fullscreen window on the other monitor
+    {
+      const others = ctl.otherDisplays(w);
+      if (!others.length) {
+        ok('Sekme yan ekranda tam ekran açılıyor (tek ekran: atlandı)', true, 'ikinci ekran yok');
+      } else {
+        const st = w.createTab({ url: base + '/a' });
+        await loaded(st, 10000);
+        await st.wc.executeJavaScript('window.__stay = 42; true');
+        const before = w.tabs.size;
+        ctl.openTabOnDisplay(w, st.id, others[0].id);
+        const side = [...ctl.windows].find((x) => x !== w && x.sideScreen);
+        const shown = side && (await waitFor(() => side.win.isVisible() && side.win.isFullScreen(), 6000, 100));
+        const onOther = side && require('electron').screen.getDisplayMatching(side.win.getBounds()).id === others[0].id;
+        const same = side && side.tabs.get(st.id) === st && st.win === side && (await st.wc.executeJavaScript('window.__stay')) === 42;
+        const moved = !w.tabs.has(st.id) && w.tabs.size === before - 1;
+        // and back: it goes to this window, the empty side window closes by itself
+        const here = require('electron').screen.getDisplayMatching(w.win.getBounds()).id;
+        if (side) ctl.openTabOnDisplay(side, st.id, here);
+        const back = w.tabs.get(st.id) === st && (await st.wc.executeJavaScript('window.__stay')) === 42;
+        const closed = side && (await waitFor(() => side.win.isDestroyed(), 3000, 100));
+        if (w.tabs.has(st.id)) st.close({ force: true });
+        w.activateTab(tab.id);
+        ok('Sekme yan ekranda tam ekran açılıyor, sayfa yeniden yüklenmiyor; geri gönderilebiliyor', !!(shown && onOther && same && moved && back && closed), JSON.stringify({ shown: !!shown, onOther, same: !!same, moved, back, closed: !!closed }));
+      }
+    }
+
     // --- session cookies (e.g. YouTube's theater mode "wide=1") survive a restart, encrypted on disk
     {
       const sc = require('./sessioncookies');

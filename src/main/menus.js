@@ -180,6 +180,13 @@ class Menus {
       .map((sp) => ({ label: `${sp.icon ? sp.icon + '  ' : ''}${sp.name}`, click: () => win.moveTabToSpace(tab.id, sp.id) }));
     const list = win.spaceTabs(tab.spaceId);
     const below = list.slice(list.indexOf(tab) + 1);
+    // Other monitors: move the tab there (a new fullscreen window, or the Techin window already there).
+    const screens = this.ctl.otherDisplays(win).map((d, i) => ({
+      label: d.label || `${t('Ekran')} ${i + 2}  (${d.size.width}×${d.size.height})`,
+      click: () => this.ctl.openTabOnDisplay(win, tab.id, d.id)
+    }));
+    const sideLabel = win.sideScreen ? t('Diğer ekrana geri gönder') : t('Yan ekranda aç (tam ekran)');
+    const sideItems = screens.length === 1 ? [{ label: sideLabel, click: screens[0].click }] : screens.length > 1 ? [{ label: sideLabel, submenu: screens }] : [];
     this.popup(win, [
       { label: t('Yenile'), click: () => tab.reload() },
       { label: t('Çoğalt'), click: () => win.duplicateTab(tab.id) },
@@ -188,6 +195,7 @@ class Menus {
       SEP,
       { label: t('Sık kullanılanlara ekle'), click: () => win.pinTab(tab.id, 'favorite') },
       { label: t('Sabitle'), click: () => win.pinTab(tab.id, 'pinned') },
+      ...sideItems,
       { label: t('Bölünmüş görünümde aç'), enabled: !!win.activeTab() && tab.id !== win.activeTabId, click: () => win.toggleSplit(tab.id) },
       { label: t('Bağlantıyı kopyala'), click: () => tab.copyUrl() },
       ...(spaceItems.length ? [{ label: t('Başka alana taşı'), submenu: spaceItems }] : []),
