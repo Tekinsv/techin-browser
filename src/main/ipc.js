@@ -29,6 +29,8 @@ const HANDLERS = {
   'ui.overlayPainted': (ctl, w, a) => int(a.seq, 1) && w.onOverlayPainted(a.seq),
   'ui.curtainReady': (ctl, w) => w.onCurtainReady(),
   'sidebar.peek': (ctl, w, a) => w.setSidebarPeek(bool(a.on)),
+  'chrome.topPeek': (ctl, w, a) => w.setTopPeek(bool(a.on)),
+  'chrome.edge': (ctl, w, a) => ['top', 'left', 'right'].includes(a.edge) && w.onScreenEdge(a.edge),
   'window.minimize': (ctl, w) => w.win.minimize(),
   'window.maximize': (ctl, w) => w.toggleMaximize(),
   'window.close': (ctl, w) => w.win.close(),
@@ -43,6 +45,41 @@ const HANDLERS = {
   'tab.new': (ctl, w) => w.newTab(),
   'tab.close': (ctl, w, a) => id(a.tabId) && w.closeTab(a.tabId),
   'tab.mute': (ctl, w, a) => id(a.tabId) && w.tabs.get(a.tabId)?.toggleMute(),
+  // ---- import from other browsers (bookmarks + history)
+  'import.detect': () => ({ sources: require('./importer').detect().map((b) => ({ id: b.id, name: b.name, profiles: b.profiles.map((p) => ({ id: p.id, name: p.name })) })) }),
+  'import.run': (ctl, w, a) => {
+    if (!str(a.source, 20) || !str(a.profile, 200)) return { error: 'failed' };
+    try {
+      const r = require('./importer').read(a.source, a.profile, { bookmarks: bool(a.bookmarks), history: bool(a.history) });
+      const bookmarks = r.bookmarks.length ? ctl.bookmarks.importTree(ctl.t('{0} (içe aktarıldı)', r.name), r.bookmarks) : 0;
+      const history = r.history.length ? ctl.history.importItems(r.history) : 0;
+      return { bookmarks, history };
+    } catch (err) {
+      console.error('[import]', err);
+      return { error: err && err.message === 'locked' ? 'locked' : 'failed' };
+    }
+  },
+
+  // ---- bookmarks
+  'bookmark.toggle': (ctl, w) => w.toggleBookmark(),
+  'bookmark.open': (ctl, w, a) => {
+    const n = str(a.id, 40) && ctl.bookmarks.find(a.id)?.node;
+    if (!n || n.type !== 'url') return;
+    if (bool(a.background)) w.createTab({ url: n.url, background: true });
+    else if (bool(a.newTab)) w.createTab({ url: n.url });
+    else w.openUrl(n.url, { newTab: !w.activeTab() || w.activeTab().kind !== 'normal' });
+  },
+  'bookmark.folder': (ctl, w, a) => str(a.id, 40) && ctl.menus.bookmarkFolderMenu(w, a.id, { x: int(a.x, 0, 20000) ?? 0, y: int(a.y, 0, 20000) ?? 0 }),
+  'bookmark.overflow': (ctl, w, a) => Array.isArray(a.ids) && ctl.menus.bookmarkOverflowMenu(w, a.ids.filter((x) => str(x, 40)).slice(0, 500), { x: int(a.x, 0, 20000) ?? 0, y: int(a.y, 0, 20000) ?? 0 }),
+  'bookmark.menu': (ctl, w, a) => str(a.id, 40) && ctl.menus.bookmarkMenu(w, a.id),
+  'bookmark.save': (ctl, w, a) => {
+    if (!str(a.id, 40)) return { ok: false };
+    const ok = ctl.bookmarks.update(a.id, { title: str(a.title, 300) ?? undefined, url: a.url === undefined ? undefined : str(a.url, 4096) || '' });
+    if (ok && w.modal?.type === 'bookmark') w.closeModal();
+    return { ok };
+  },
+  'bookmark.move': (ctl, w, a) => str(a.id, 40) && int(a.index, 0, 20000) !== null && ctl.bookmarks.moveOnBar(a.id, a.index),
+
   // per-site volume popover next to the passwords button
   'volume.open': (ctl, w) => {
     const tab = w.activeTab();
@@ -277,6 +314,12 @@ function installIpc(ctl) {
     if (!tab || !tab.isActive() || tab.win.win.isDestroyed()) return false;
     await tab.win.beforeHtmlFullscreen();
     return true;
+  });
+
+  // Mouse at the screen edge inside a page (F11 mode): reveal the bars / sidebar.
+  ipcMain.on('techin:edge', (event, edge) => {
+    const tab = ctl.tabByWcId(event.sender.id);
+    if (tab && tab.isActive() && ['top', 'left', 'right'].includes(edge)) tab.win.onScreenEdge(edge);
   });
 
   // Page crashes aside, the UI must never be able to reach anything else.

@@ -57,6 +57,30 @@ class History {
     this.store.save();
   }
 
+  /** Imported history (another browser): merged by address, newest visit wins. */
+  importItems(list) {
+    let added = 0;
+    for (const x of list) {
+      if (!x || typeof x.url !== 'string' || !/^https?:\/\//.test(x.url) || x.url.length > 4096) continue;
+      const last = Number.isFinite(x.last) && x.last > 0 && x.last < Date.now() + 86400000 ? x.last : 0;
+      const visits = Number.isFinite(x.visits) ? Math.max(1, Math.min(100000, Math.floor(x.visits))) : 1;
+      const it = this.byUrl.get(x.url);
+      if (it) {
+        it.visits = Math.max(it.visits, visits);
+        if (last > it.last) it.last = last;
+        if (!it.title && x.title) it.title = String(x.title).slice(0, 300);
+      } else {
+        const n = { url: x.url, title: x.title ? String(x.title).slice(0, 300) : '', visits, last };
+        this.items.push(n);
+        this.byUrl.set(x.url, n);
+        added++;
+      }
+    }
+    if (this.items.length > MAX_ENTRIES) this.trim();
+    this.store.save();
+    return added;
+  }
+
   setTitle(url, title) {
     const it = this.byUrl.get(url);
     if (it && title && it.title !== title) {

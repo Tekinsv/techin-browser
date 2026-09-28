@@ -689,6 +689,45 @@ async function run(ctl) {
       ok('Siteye özel ses ayarı: sitenin kendi sesi bozulmadan gerçek ses kısılıyor ve hatırlanıyor', r1.site === 100 && r1.real === 50 && r2.site === 80 && r2.real === 40 && r3.real === 50 && !!pop && popUi === '%50', JSON.stringify({ r1, r2, r3, pop: !!pop, popUi }));
     }
 
+    // --- bookmarks: star / Ctrl+D -> bar under the address bar; F11 top edge brings the bars down
+    {
+      const uiq = (code) => w.uiView.webContents.executeJavaScript(code);
+      const bt = w.createTab({ url: base + '/a' });
+      await loaded(bt, 10000);
+      const y0 = w.metrics().content.y;
+      w.toggleBookmark();
+      await sleep(400);
+      const y1 = w.metrics().content.y;
+      const ui1 = await uiq("({ bar: !document.getElementById('bmbar').classList.contains('hidden'), chips: document.querySelectorAll('#bmlist .bm').length, star: document.getElementById('btn-star').classList.contains('on') })");
+      // open it from the bar in another tab
+      const other = w.createTab({ url: base + '/b' });
+      await loaded(other, 10000);
+      await sleep(300);
+      await uiq("document.querySelector('#bmlist .bm').click(); true");
+      const opened = await waitFor(() => other.url.startsWith(base + '/a'), 4000, 100);
+      // F11: the top edge brings the address + bookmarks bars down over the page
+      await w.toggleFocusMode();
+      await waitFor(() => w.win.isFullScreen(), 3000, 50);
+      await sleep(300);
+      w.onScreenEdge('top');
+      const peek = await waitFor(() => w.topPeek && w.uiOnTop, 2000, 50);
+      await sleep(400);
+      const ui2 = await uiq("({ open: document.documentElement.classList.contains('top-open'), top: Math.round(document.getElementById('topbar').getBoundingClientRect().top), bar: !document.getElementById('bmbar').classList.contains('hidden') })");
+      w.setTopPeek(false);
+      await w.toggleFocusMode();
+      await waitFor(() => !w.win.isFullScreen(), 3000, 50);
+      await sleep(400);
+      const back = await uiq("!document.documentElement.classList.contains('chrome-out')");
+      ctl.bookmarks.removeUrl(base + '/a');
+      await sleep(300);
+      const y2 = w.metrics().content.y;
+      bt.close({ force: true });
+      other.close({ force: true });
+      w.activateTab(tab.id);
+      ok('Yer imleri: yıldızla eklenince çubuk çıkıyor, tıklayınca açılıyor, silinince kalkıyor', y1 === y0 + 30 && ui1.bar && ui1.chips === 1 && ui1.star && !!opened && y2 === y0, JSON.stringify({ y0, y1, y2, ui1, opened: !!opened }));
+      ok('F11 (Zen gibi): üst kenara gelince adres ve yer imleri çubuğu kayarak iniyor; çıkınca her şey geri geliyor', !!peek && ui2.open && ui2.top === 0 && ui2.bar && back, JSON.stringify({ peek: !!peek, ui2, back }));
+    }
+
     // --- session cookies (e.g. YouTube's theater mode "wide=1") survive a restart, encrypted on disk
     {
       const sc = require('./sessioncookies');
@@ -977,7 +1016,7 @@ async function run(ctl) {
         memRows = await ux('document.querySelectorAll(".memrow").length');
       }
     }
-    ok('Tüm ayar bölümleri açıldı', sections === 9, `${sections} bölüm`);
+    ok('Tüm ayar bölümleri açıldı', sections === 10, `${sections} bölüm`);
     ok('Performans bölümü sekme belleklerini listeliyor', memRows >= 1, `${memRows} satır`);
     await ux('document.querySelectorAll(".snav button")[0].click(); true');
     await sleep(300);

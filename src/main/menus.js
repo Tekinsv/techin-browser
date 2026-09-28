@@ -1,6 +1,6 @@
 'use strict';
 // Native context menus (fast, never covered by the page).
-const { Menu, clipboard, dialog } = require('electron');
+const { Menu, clipboard, dialog, nativeImage } = require('electron');
 const { isOpenableFromPage, displayHost } = require('./url');
 const { sanitizeFilename } = require('./policy');
 
@@ -30,10 +30,78 @@ class Menus {
     return this.ctl.t(...a);
   }
 
-  popup(win, items) {
+  popup(win, items, at) {
     const list = tidy(items);
     if (!list.length || win.win.isDestroyed()) return;
-    Menu.buildFromTemplate(list).popup({ window: win.win });
+    Menu.buildFromTemplate(list).popup({ window: win.win, ...(at ? { x: Math.round(at.x), y: Math.round(at.y) } : {}) });
+  }
+
+  // ---- bookmarks
+
+  _bmIcon(n) {
+    if (n.type === 'folder' || !n.favicon) return undefined;
+    try {
+      const img = nativeImage.createFromDataURL(n.favicon);
+      return img.isEmpty() ? undefined : img.resize({ width: 16, height: 16 });
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Menu items for bookmark nodes: links open in the current tab (new tab with Ctrl), folders nest. */
+  _bmItems(win, nodes, depth = 0) {
+    const t = this.t.bind(this);
+    if (!nodes.length) return [{ label: t('(boş)'), enabled: false }];
+    return nodes.slice(0, 400).map((n) =>
+      n.type === 'folder'
+        ? { label: n.title.replace(/&/g, '&&') || t('Klasör'), submenu: depth < 12 ? this._bmItems(win, n.children, depth + 1) : [] }
+        : {
+            label: (n.title || n.url).slice(0, 80).replace(/&/g, '&&'),
+            icon: this._bmIcon(n),
+            click: (_m, _w, ev) => (ev && (ev.ctrlKey || ev.metaKey) ? win.createTab({ url: n.url, background: true }) : win.openUrl(n.url, { newTab: !win.activeTab() || !!win.activeTab()?.kind?.match(/pinned|favorite/) }))
+          }
+    );
+  }
+
+  bookmarkFolderMenu(win, id, at) {
+    const f = this.ctl.bookmarks.find(id);
+    if (!f || f.node.type !== 'folder') return;
+    const t = this.t.bind(this);
+    const items = this._bmItems(win, f.node.children);
+    const urls = f.node.children.filter((n) => n.type === 'url');
+    if (urls.length > 1) items.push(SEP, { label: t('Tümünü yeni sekmelerde aç ({0})', urls.length), click: () => urls.slice(0, 30).forEach((n) => win.createTab({ url: n.url, background: true })) });
+    this.popup(win, items, at);
+  }
+
+  bookmarkOverflowMenu(win, ids, at) {
+    const nodes = ids.map((id) => this.ctl.bookmarks.find(id)?.node).filter(Boolean);
+    this.popup(win, this._bmItems(win, nodes), at);
+  }
+
+  bookmarkMenu(win, id) {
+    const f = this.ctl.bookmarks.find(id);
+    if (!f) return;
+    const t = this.t.bind(this);
+    const n = f.node;
+    const items =
+      n.type === 'url'
+        ? [
+            { label: t('Aç'), click: () => win.openUrl(n.url) },
+            { label: t('Yeni sekmede aç'), click: () => win.createTab({ url: n.url }) },
+            { label: t('Bağlantıyı kopyala'), click: () => clipboard.writeText(n.url) },
+            SEP,
+            { label: t('Düzenle…'), click: () => win.openModal({ type: 'bookmark', data: { id: n.id, title: n.title, url: n.url, folder: false } }) },
+            { label: t('Sil'), click: () => this.ctl.bookmarks.remove(n.id) }
+          ]
+        : [
+            { label: t('Yeniden adlandır…'), click: () => win.openModal({ type: 'bookmark', data: { id: n.id, title: n.title, url: '', folder: true } }) },
+            { label: t('Klasörü sil ({0} öğe)', this.ctl.bookmarks.countAll(n.children)), click: () => this.ctl.bookmarks.remove(n.id) }
+          ];
+    items.push(SEP, { label: t('Yeni klasör'), click: () => this.ctl.bookmarks.addFolder(t('Yeni klasör')) }, {
+      label: this.ctl.settings.data.bookmarksBar === 'never' ? t('Yer imleri çubuğunu göster') : t('Yer imleri çubuğunu gizle'),
+      click: () => this.ctl.setSetting('bookmarksBar', this.ctl.settings.data.bookmarksBar === 'never' ? 'always' : 'never')
+    });
+    this.popup(win, items);
   }
 
   pageMenu(tab, p) {

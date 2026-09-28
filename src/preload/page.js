@@ -378,6 +378,26 @@ if (/^https?:$/.test(location.protocol)) {
   ipcRenderer.on('techin:volume', (_e, v) => apply(v));
 }
 
+// ------------------------------------------------------------ 3e) screen edges (F11 mode)
+// In F11 mode the page covers the whole screen, so only the page sees the mouse
+// reach the top or side edge; the main process then slides the bars / sidebar in
+// (it ignores this outside F11). Main frame only, at most 5 times a second.
+if (window.top === window) {
+  let last = 0;
+  addEventListener(
+    'mousemove',
+    (e) => {
+      const edge = e.clientY <= 1 ? 'top' : e.clientX <= 1 ? 'left' : e.clientX >= innerWidth - 2 ? 'right' : null;
+      if (!edge || !e.isTrusted) return;
+      const now = Date.now();
+      if (now - last < 200) return;
+      last = now;
+      ipcRenderer.send('techin:edge', edge);
+    },
+    { capture: true, passive: true }
+  );
+}
+
 // ------------------------------------------------------------ 4) passwords
 // Everything here runs in the isolated world: page scripts can't call
 // ipcRenderer, can't see our suggestion list (closed shadow root) and can't

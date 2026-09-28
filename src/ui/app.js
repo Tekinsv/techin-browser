@@ -230,6 +230,9 @@
     root.classList.toggle('sb-hidden', !!L.hidden);
     root.classList.toggle('sb-auto', !!L.autoHide);
     root.classList.toggle('sb-peek', !!L.peek);
+    if (!L.peek) root.classList.remove('sb-open');
+    root.classList.toggle('top-peek', !!L.topPeek);
+    if (!L.topPeek) root.classList.remove('top-open');
     root.style.setProperty('--peekw', px(L.peekWidth || 240));
     root.style.setProperty('--edge', px(Math.max(6, L.edge || 0)));
     root.style.setProperty('--tbh', px(L.top || 40));
@@ -255,6 +258,7 @@
     setIcon($('btn-siteinfo'), 'settings');
     setIcon($('btn-split'), 'split');
     setIcon($('btn-passwords'), 'key');
+    setIcon($('btn-star'), 'star');
     setIcon($('btn-settings'), 'gear');
     setIcon($('btn-fwd'), 'forward');
     setIcon($('space-menu'), 'more');
@@ -860,18 +864,57 @@
   }
 
   // ---- auto-hidden sidebar: the edge strip reveals it, leaving it hides it again
+  // Opening: the main process raises the UI first, then says 'overlay-raised' and the
+  // sidebar slides in from fully off-screen (sb-open). Closing: it slides out first
+  // and only then is the UI lowered again - the whole movement is always visible.
   let peekTimer = null;
+  const SLIDE_MS = 230;
   const peek = (on, delay) => {
     clearTimeout(peekTimer);
     peekTimer = setTimeout(() => {
-      if (!!(S && S.layout.peek) !== on) cmd('sidebar.peek', { on });
+      const peeking = !!(S && S.layout.peek);
+      if (on) {
+        if (!peeking) cmd('sidebar.peek', { on: true });
+        else root.classList.add('sb-open');
+      } else if (peeking) {
+        root.classList.remove('sb-open');
+        peekTimer = setTimeout(() => cmd('sidebar.peek', { on: false }), SLIDE_MS);
+      }
     }, delay);
   };
   $('sb-hot').addEventListener('mouseenter', () => peek(true, 60));
   $('sb-hot').addEventListener('mouseleave', () => clearTimeout(peekTimer));
-  $('sidebar').addEventListener('mouseenter', () => S && S.layout.peek && clearTimeout(peekTimer));
+  $('sidebar').addEventListener('mouseenter', () => {
+    if (!S || !S.layout.peek) return;
+    clearTimeout(peekTimer);
+    root.classList.add('sb-open'); // came back while it was sliding out
+  });
   $('sidebar').addEventListener('mouseleave', () => S && S.layout.peek && !resizing && peek(false, 300));
   $('content').addEventListener('mousedown', () => S && S.layout.peek && peek(false, 0));
+
+  // ---- F11 mode: screen edges bring the bars / sidebar (when the UI itself is under
+  // the mouse, e.g. on the start page); moving away from the bars slides them up.
+  let topTimer = null;
+  document.addEventListener('mousemove', (e) => {
+    if (!S || !S.win.bare) return;
+    if (S.layout.topPeek) {
+      const bottom = (S.layout.bmbar || S.bookmarks.length ? 70 : 40) + 18;
+      if (e.clientY > bottom && root.classList.contains('top-open') && !topTimer) {
+        topTimer = setTimeout(() => {
+          topTimer = null;
+          root.classList.remove('top-open');
+          setTimeout(() => !root.classList.contains('top-open') && cmd('chrome.topPeek', { on: false }), 220);
+        }, 250);
+      } else if (e.clientY <= bottom) {
+        clearTimeout(topTimer);
+        topTimer = null;
+        root.classList.add('top-open');
+      }
+      return;
+    }
+    const edge = e.clientY <= 1 ? 'top' : e.clientX <= 1 ? 'left' : e.clientX >= innerWidth - 2 ? 'right' : null;
+    if (edge) cmd('chrome.edge', { edge });
+  });
 
   // Clicking the dimmed page around a panel closes it.
   $('panelbg').addEventListener('mousedown', () => cmd('panel.close'));
@@ -1170,6 +1213,7 @@
     ['sites', 'Site izinleri', 'lock'],
     ['performance', 'Performans', 'zap'],
     ['downloads', 'İndirmeler', 'download'],
+    ['import', 'İçe aktar', 'download'],
     ['general', 'Genel', 'settings'],
     ['about', 'Hakkında', 'info']
   ];
@@ -1189,7 +1233,7 @@
     );
     panelSyncs.push(() => banner.classList.toggle('hidden', !S.meta.restartNeeded));
     inner.append(banner, h('div', { class: 'group-title big', text: t(SECTIONS.find((s) => s[0] === settingsSection)[1]) }));
-    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, general: secGeneral, about: secAbout };
+    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, import: secImport, general: secGeneral, about: secAbout };
     inner.append(...builders[settingsSection]().flat().filter(Boolean));
     return h('div', { class: 'panel-body' }, nav, h('div', { class: 'panel-scroll' }, inner));
   }
@@ -1239,7 +1283,8 @@
         row('Kenar çubuğu genişliği', null, range('sidebarWidth', 200, 420)),
         row('Sayfa çevresindeki boşluk', null, range('contentGap', 0, 16)),
         row('Köşe yuvarlaklığı', null, range('cornerRadius', 0, 18)),
-        row('Bağlantı önizlemesi', 'Fareyle üzerine geldiğiniz bağlantının adresini kenar çubuğunda gösterir.', toggle('showHoverUrl'))
+        row('Bağlantı önizlemesi', 'Fareyle üzerine geldiğiniz bağlantının adresini kenar çubuğunda gösterir.', toggle('showHoverUrl')),
+        row('Yer imleri çubuğu', 'Adres çubuğunun altında (yer imi varsa). Ctrl+D ile sayfayı ekleyin, Ctrl+Shift+B ile gösterin/gizleyin.', seg('bookmarksBar', [['always', 'Göster'], ['never', 'Gizle']]))
       )
     ];
   }
@@ -1442,6 +1487,7 @@
       group(
         'Akıcılık',
         row('Kaydırma', 'Akıcı: Firefox/Edge gibi yumuşak, momentumlu kaydırma. Yeniden başlatma gerekir.', seg('smoothScroll', [['fluid', 'Akıcı'], ['standard', 'Standart'], ['off', 'Kapalı']])),
+        row('Donanım hızlandırma', 'Sayfalar ve videolar ekran kartıyla çizilip çözülür. Görüntü bozulması, titreme ya da ekran kartı sorunu yaşarsanız kapatın; kapalıyken tarayıcı daha yavaş olabilir. Yeniden başlatma gerekir.', toggle('hardwareAcceleration')),
         row('GPU ile çizim', 'Sayfaları ekran kartıyla çizer; Shorts/Reels gibi kaydırmalı videolarda takılmayı azaltır. Yeniden başlatma gerekir.', toggle('gpuRaster'))
       ),
       group('Şu anki bellek kullanımı', stats, rows),
@@ -1643,6 +1689,63 @@
     ];
   }
 
+  // ---- import from other browsers
+  function secImport() {
+    const box = h('div', { class: 'group imp-list' }, h('div', { class: 'pw-empty', text: t('Tarayıcılar aranıyor…') }));
+    cmd('import.detect').then((r) => {
+      const src = (r && r.sources) || [];
+      if (!src.length) return box.replaceChildren(h('div', { class: 'pw-empty', text: t('Bu bilgisayarda içe aktarılabilecek bir tarayıcı bulunamadı.') }));
+      box.replaceChildren(
+        ...src.map((b) => {
+          const sel = h('select', { class: 'sel' }, b.profiles.map((p) => h('option', { value: p.id, text: p.name })));
+          const bm = h('input', { type: 'checkbox', checked: true });
+          const hi = h('input', { type: 'checkbox', checked: true });
+          const res = h('small', { class: 'imp-res' });
+          const go = h('button', { class: 'btn primary small' }, t('İçe aktar'));
+          go.addEventListener('click', () => {
+            if (!bm.checked && !hi.checked) return;
+            go.disabled = true;
+            res.textContent = t('Aktarılıyor…');
+            cmd('import.run', { source: b.id, profile: sel.value, bookmarks: bm.checked, history: hi.checked }).then((x) => {
+              go.disabled = false;
+              if (!x || x.error) res.textContent = x && x.error === 'locked' ? t('{0} dosyaları kullanıyor. Tarayıcıyı kapatıp tekrar deneyin.', b.name) : t('Aktarılamadı.');
+              else res.textContent = t('{0} yer imi, {1} geçmiş kaydı eklendi.', x.bookmarks, x.history);
+            });
+          });
+          return h(
+            'div',
+            { class: 'setting imp-row' },
+            h('div', { class: 'txt' }, h('b', { text: b.name }), res),
+            b.profiles.length > 1 ? sel : null,
+            h('label', { class: 'imp-check' }, bm, t('Yer imleri')),
+            h('label', { class: 'imp-check' }, hi, t('Geçmiş')),
+            go
+          );
+        })
+      );
+    });
+    const toPasswords = h('button', { class: 'btn small', onclick: () => ((settingsSection = 'passwords'), (panelKey = null), renderPanel()) }, ico('key'), t('Parolalara git'));
+    return [
+      group('Diğer tarayıcılardan', box),
+      group(
+        'Parolalar',
+        h(
+          'div',
+          { class: 'setting col imp-pw' },
+          h('small', { text: t('Chrome, Edge ve Brave parolalarını yalnızca kendileri açabiliyor; Firefox ve Zen de kendi anahtarlarıyla saklıyor. Bu yüzden parolalar bir dosyayla taşınır:') }),
+          h(
+            'ol',
+            null,
+            h('li', { text: t('Chrome / Edge / Brave: Ayarlar → Otomatik doldurma → Parolalar (Google Parola Yöneticisi) → Ayarlar → Parolaları dışa aktar.') }),
+            h('li', { text: t('Firefox / Zen: Parolalar (about:logins) → sağ üstteki ⋯ → Parolaları dışa aktar.') }),
+            h('li', { text: t('Techin: Ayarlar → Parolalar → İçe aktar ile o CSV dosyasını seçin. Sonra dosyayı silin; içinde parolalar şifresiz durur.') })
+          ),
+          toPasswords
+        )
+      )
+    ];
+  }
+
   function secGeneral() {
     const home = h('input', { class: 'txtin', placeholder: 'https://www.google.com/', spellcheck: 'false' });
     const homeHint = h('small');
@@ -1691,7 +1794,8 @@
       ['Ctrl+Shift+T', 'Kapatılan sekmeyi geri aç'],
       ['Ctrl+Tab', 'Sonraki sekme'],
       ['Ctrl+1…9', 'Sekmeye git'],
-      ['Ctrl+D', 'Sık kullanılanlara ekle'],
+      ['Ctrl+D', 'Yer imlerine ekle / çıkar'],
+      ['Ctrl+Shift+B', 'Yer imleri çubuğunu göster / gizle'],
       ['Ctrl+F', 'Sayfada bul'],
       ['Ctrl+Shift+S', 'Kenar çubuğunu daralt'],
       ['Ctrl+Shift+C', 'Bağlantıyı kopyala'],
@@ -2018,7 +2122,7 @@
     const box = $('modal');
     box.replaceChildren();
     if (!m) return;
-    const builders = { palette: buildPalette, siteinfo: buildSiteInfo, volume: buildVolume, picker: buildPicker, auth: buildAuth, space: buildSpace, update: buildUpdate };
+    const builders = { palette: buildPalette, siteinfo: buildSiteInfo, volume: buildVolume, bookmark: buildBookmark, picker: buildPicker, auth: buildAuth, space: buildSpace, update: buildUpdate };
     const el = (builders[m.type] || (() => null))(m);
     if (el) box.append(el);
   }
@@ -2229,6 +2333,119 @@
       }
       box.append(sect(t('Veriler'), h('div', { class: 'prow' }, ico('cookie'), h('span', { text: t('{0} çerez', d.cookies) }), h('button', { class: 'btn small', onclick: () => cmd('site.clearData', { origin: d.origin }) }, t('Temizle')))));
     }
+    return box;
+  }
+
+  // ---- bookmarks bar + star
+  let bmSig = '';
+  let bmDrag = null;
+  function renderBookmarks() {
+    const a = S.active;
+    const star = $('btn-star');
+    const canStar = !!a && /^(https?|file):/.test(a.url || '');
+    star.classList.toggle('hidden', !canStar);
+    star.classList.toggle('on', !!(a && a.bookmarked));
+    star.title = a && a.bookmarked ? t('Yer iminden kaldır (Ctrl+D)') : t('Yer imlerine ekle (Ctrl+D)');
+    const bar = $('bmbar');
+    const list = S.bookmarks || [];
+    const show = (S.layout.bmbar > 0 || S.layout.topPeek) && list.length > 0;
+    bar.classList.toggle('hidden', !show);
+    if (!show) return;
+    const sig = JSON.stringify(list.map((b) => [b.id, b.type, b.title, b.url, b.favicon ? b.favicon.length : 0])) + '|' + S.layout.content.width;
+    if (sig !== bmSig) {
+      bmSig = sig;
+      const box = $('bmlist');
+      box.replaceChildren(
+        ...list.map((b) => {
+          const icon = b.type === 'folder' ? ico('folder') : favEl(b.favicon, b.url, b.title);
+          const el = h('button', { class: 'bm' + (b.type === 'folder' ? ' folder' : ''), title: b.type === 'url' ? `${b.title}\n${b.url}` : b.title, draggable: 'true', dataset: { id: b.id } }, icon, b.title ? h('span', { text: b.title }) : null);
+          el.addEventListener('click', (e) => {
+            if (b.type === 'folder') {
+              const r = el.getBoundingClientRect();
+              cmd('bookmark.folder', { id: b.id, x: Math.round(r.left), y: Math.round(r.bottom + 2) });
+            } else cmd('bookmark.open', { id: b.id, newTab: e.ctrlKey || e.metaKey });
+          });
+          el.addEventListener('auxclick', (e) => e.button === 1 && b.type === 'url' && cmd('bookmark.open', { id: b.id, background: true }));
+          el.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            cmd('bookmark.menu', { id: b.id });
+          });
+          el.addEventListener('dragstart', () => (bmDrag = b.id));
+          el.addEventListener('dragend', () => (bmDrag = null));
+          return el;
+        })
+      );
+      requestAnimationFrame(layoutBookmarks);
+    }
+  }
+
+  /** Items that don't fit go into the » menu. */
+  function layoutBookmarks() {
+    const box = $('bmlist');
+    const more = $('bm-more');
+    const kids = [...box.children];
+    kids.forEach((k) => k.classList.remove('off'));
+    const limit = box.getBoundingClientRect().right - 34;
+    const hidden = [];
+    for (const k of kids) {
+      if (k.getBoundingClientRect().right > limit) {
+        k.classList.add('off');
+        hidden.push(k.dataset.id);
+      }
+    }
+    more.classList.toggle('hidden', !hidden.length);
+    more.dataset.ids = hidden.join(',');
+  }
+  $('bm-more').addEventListener('click', () => {
+    const r = $('bm-more').getBoundingClientRect();
+    cmd('bookmark.overflow', { ids: ($('bm-more').dataset.ids || '').split(',').filter(Boolean), x: Math.round(r.left), y: Math.round(r.bottom + 2) });
+  });
+  $('bmlist').addEventListener('dragover', (e) => bmDrag && e.preventDefault());
+  $('bmlist').addEventListener('drop', (e) => {
+    if (!bmDrag) return;
+    e.preventDefault();
+    const kids = [...$('bmlist').children].filter((k) => k.dataset.id !== bmDrag);
+    let index = kids.length;
+    for (let i = 0; i < kids.length; i++) {
+      const r = kids[i].getBoundingClientRect();
+      if (e.clientX < r.left + r.width / 2) {
+        index = i;
+        break;
+      }
+    }
+    cmd('bookmark.move', { id: bmDrag, index });
+    bmDrag = null;
+  });
+  $('bmbar').addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.bm')) return;
+    e.preventDefault();
+    const first = (S.bookmarks || [])[0];
+    if (first) cmd('bookmark.menu', { id: first.id });
+  });
+  $('btn-star').addEventListener('click', () => cmd('bookmark.toggle'));
+  addEventListener('resize', () => !$('bmbar').classList.contains('hidden') && layoutBookmarks());
+
+  // ---- bookmark editor (rename / change address)
+  function buildBookmark(m) {
+    const d = m.data;
+    const box = h('div', { class: 'pop dialog bm-dialog' });
+    centerIn(box, 420, 0.18);
+    const title = h('input', { class: 'txtin', value: d.title || '', placeholder: t('Ad'), spellcheck: 'false' });
+    const url = d.folder ? null : h('input', { class: 'txtin', value: d.url || '', placeholder: 'https://', spellcheck: 'false' });
+    const err = h('small', { class: 'pw-err' });
+    const save = () =>
+      cmd('bookmark.save', { id: d.id, title: title.value.trim(), ...(url ? { url: url.value.trim() } : {}) }).then((r) => {
+        if (!r || !r.ok) err.textContent = t('Geçerli bir adres yazın.');
+      });
+    for (const i of [title, url].filter(Boolean)) i.addEventListener('keydown', (e) => e.key === 'Enter' && save());
+    box.append(
+      h('h3', { text: d.folder ? t('Klasörü yeniden adlandır') : t('Yer imini düzenle') }),
+      title,
+      url,
+      err,
+      h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => closeModal() }, t('Vazgeç')), h('button', { class: 'btn primary', onclick: save }, t('Kaydet')))
+    );
+    setTimeout(() => title.focus(), 0);
     return box;
   }
 
@@ -2461,6 +2678,13 @@
         root.style.setProperty('--cd', data.ms + 'ms');
         root.classList.toggle('curtain-on', !!data.on);
       } else root.classList.remove('curtain-up', 'curtain-on');
+    } else if (name === 'chrome') {
+      // F11 (Zen-style): the bars and the sidebar slide away / back in
+      if (data.phase === 'out') root.classList.add('chrome-out');
+      else requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('chrome-out')));
+    } else if (name === 'overlay-raised') {
+      if (S && S.layout.peek) requestAnimationFrame(() => root.classList.add('sb-open'));
+      if (S && S.layout.topPeek) requestAnimationFrame(() => root.classList.add('top-open'));
     } else if (name === 'passwords-changed') {
       if (pwReload) pwReload();
     } else if (name === 'modal-open') {
@@ -2503,6 +2727,7 @@
     }
     renderTop();
     renderUrlbar();
+    renderBookmarks();
     renderFavorites();
     renderSpaceHead();
     renderLists();

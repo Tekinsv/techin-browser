@@ -66,6 +66,7 @@ const { openPopup } = require('./popup');
 const { TechinWindow } = require('./window');
 const { Updater } = require('./updater');
 const { Passwords, sanitizePasswords } = require('./passwords');
+const { Bookmarks, sanitizeBookmarks } = require('./bookmarks');
 const sessionCookies = require('./sessioncookies');
 
 const sessionCookieFile = () => path.join(USER_DATA, 'session-cookies.bin'); // USER_DATA is set further down
@@ -110,7 +111,10 @@ function applySwitches(s) {
   } else {
     cl.appendSwitch('disable-smooth-scrolling');
   }
-  if (s.gpuRaster) {
+  if (!s.hardwareAcceleration) {
+    // Everything drawn and decoded by the CPU (for driver problems / flicker).
+    app.disableHardwareAcceleration();
+  } else if (s.gpuRaster) {
     cl.appendSwitch('enable-gpu-rasterization');
     cl.appendSwitch('enable-zero-copy');
   }
@@ -202,6 +206,7 @@ class Controller {
       debounceMs: 1500
     });
     this.downloadsStore = store('downloads.json', { defaults: () => ({ items: [] }), sanitize: sanitizeDownloads });
+    this.bookmarks = new Bookmarks(this, store('bookmarks.json', { defaults: () => ({ bar: [] }), sanitize: sanitizeBookmarks }));
     this.passwords = new Passwords(this, store('passwords.json', { defaults: () => ({ items: [], never: [] }), sanitize: sanitizePasswords, debounceMs: 300 }));
     this.windows = new Set();
     this.lastFocused = null;
@@ -405,6 +410,15 @@ class Controller {
     return this.newWindow({ incognito: win.incognito, sideScreen: true, bounds: { x: a.x + Math.round((a.width - width) / 2), y: a.y + Math.round((a.height - height) / 2), width, height } });
   }
 
+  /** The bar may appear/disappear (first/last bookmark): relayout every window. */
+  onBookmarksChanged() {
+    for (const w of this.windows) {
+      if (w.win.isDestroyed()) continue;
+      w.layout();
+      w.scheduleState();
+    }
+  }
+
   lastWindow() {
     if (this.lastFocused && !this.lastFocused.win.isDestroyed()) return this.lastFocused;
     for (const w of this.windows) if (!w.win.isDestroyed()) return w;
@@ -481,7 +495,7 @@ class Controller {
   }
 
   flushStores() {
-    for (const s of [this.settings, this.sites, this.library.store, this.history.store, this.downloadsStore, this.passwords.store]) s.saveNow();
+    for (const s of [this.settings, this.sites, this.library.store, this.history.store, this.downloadsStore, this.passwords.store, this.bookmarks.store]) s.saveNow();
   }
 
   quit() {

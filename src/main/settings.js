@@ -22,6 +22,8 @@ const SCHEMA = {
   // What Ctrl+T / "New tab" opens: the command bar, the start page, or the home page.
   newTabPage: { type: 'enum', values: ['palette', 'start', 'home'], def: 'palette' },
   homeUrl: { type: 'string', max: 2000, def: 'https://www.google.com/', test: (v) => /^https?:\/\/[^\s]+$/.test(v) },
+  // bookmarks bar under the address bar (only drawn when there are bookmarks)
+  bookmarksBar: { type: 'enum', values: ['always', 'never'], def: 'always' },
   passwordSave: { type: 'bool', def: true },
   passwordAutofill: { type: 'bool', def: true },
   adblock: { type: 'bool', def: true },
@@ -36,6 +38,7 @@ const SCHEMA = {
   memorySaver: { type: 'bool', def: true },
   smoothScroll: { type: 'enum', values: ['fluid', 'standard', 'off'], def: 'fluid' },
   gpuRaster: { type: 'bool', def: true },
+  hardwareAcceleration: { type: 'bool', def: true },
   autoArchiveHours: { type: 'enum', values: [0, 12, 24, 168], def: 0 },
   downloadDir: { type: 'string', max: 1000, def: '' },
   askDownload: { type: 'bool', def: false },
@@ -45,7 +48,7 @@ const SCHEMA = {
 };
 
 // Changing these only takes effect after a restart (Chromium command-line switches).
-const RESTART_KEYS = new Set(['smoothScroll', 'gpuRaster', 'memorySaver', 'passkeys']);
+const RESTART_KEYS = new Set(['smoothScroll', 'gpuRaster', 'memorySaver', 'passkeys', 'hardwareAcceleration']);
 
 function sanitizeValue(spec, value) {
   switch (spec.type) {

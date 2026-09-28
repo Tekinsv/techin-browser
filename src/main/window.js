@@ -12,6 +12,7 @@ const UI_URL = 'techin-ui://app/ui/index.html';
 const UI_PRELOAD = path.join(__dirname, '..', 'preload', 'ui.js');
 const COMPACT_WIDTH = 52;
 const TOPBAR_HEIGHT = 40;
+const BMBAR_HEIGHT = 30;
 const SPLIT_GAP = 6;
 const FIND_HEIGHT = 48;
 const INFOBAR_HEIGHT = 52;
@@ -124,8 +125,12 @@ class TechinWindow {
     for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen', 'restore']) {
       w.on(ev, () => {
         if (ev === 'leave-full-screen') {
+          const wasFocus = this.focusMode;
           this.focusMode = false;
           this.htmlFullscreen = null;
+          this.topPeek = false;
+          // left F11 some other way (Esc, window manager): bring the chrome back in
+          if (wasFocus) this.sendEvent('chrome', { phase: 'in' });
         }
         this.layout();
         this.scheduleState();
@@ -270,6 +275,7 @@ class TechinWindow {
     const edge = auto ? Math.max(gap, 6) : gap;
     const radius = this.win.isMaximized() || this.win.isFullScreen() ? Math.min(s.cornerRadius, 8) : s.cornerRadius;
     const left = s.sidebarSide === 'left';
+    const bmbar = s.bookmarksBar !== 'never' && this.ctl.bookmarks.bar.length ? BMBAR_HEIGHT : 0;
     const x = left ? (sidebar ? sidebar : edge) : gap;
     const width = Math.max(200, W - sidebar - (sidebar ? gap : edge + gap));
     return {
@@ -279,7 +285,8 @@ class TechinWindow {
       gap,
       top: TOPBAR_HEIGHT,
       radius,
-      content: { x, y: TOPBAR_HEIGHT, width, height: Math.max(150, H - TOPBAR_HEIGHT - gap) },
+      content: { x, y: TOPBAR_HEIGHT + bmbar, width, height: Math.max(150, H - TOPBAR_HEIGHT - bmbar - gap) },
+      bmbar,
       auto,
       edge,
       peekWidth: s.sidebarCompact ? COMPACT_WIDTH : s.sidebarWidth,
@@ -375,7 +382,7 @@ class TechinWindow {
       this.uiOnTop = false;
     }
     this.shownViews = desired;
-    const wantUiTop = (!!(this.modal || this.panel || this.sidebarPeek) && this.uiTopReady) || !desired.length || !!this.curtainUp;
+    const wantUiTop = (!!(this.modal || this.panel || this.sidebarPeek || this.topPeek) && this.uiTopReady) || !desired.length || !!this.curtainUp;
     if (wantUiTop && !this.uiOnTop) {
       this.win.contentView.addChildView(this.uiView);
       this.uiOnTop = true;
@@ -868,12 +875,12 @@ class TechinWindow {
 
   /** Auto-hidden sidebar: shown floating over the page while the mouse is on it. */
   setSidebarPeek(on) {
-    on = !!on && !!(this._metrics || this.metrics()).auto;
+    on = !!on && (!!(this._metrics || this.metrics()).auto || (this.focusMode && !this.htmlFullscreen));
     if (on === !!this.sidebarPeek) return;
     this.sidebarPeek = on;
     if (on) {
-      if (!this.modal && !this.panel) this._startOverlay();
-    } else if (!this.modal && !this.panel) {
+      if (!this.modal && !this.panel && !this.topPeek) this._startOverlay();
+    } else if (!this.modal && !this.panel && !this.topPeek) {
       clearTimeout(this._overlayFallback);
       this.uiTopReady = false;
     }
@@ -884,7 +891,7 @@ class TechinWindow {
   closePanel() {
     if (!this.panel) return;
     this.panel = null;
-    if (!this.modal && !this.sidebarPeek) {
+    if (!this.modal && !this.sidebarPeek && !this.topPeek) {
       clearTimeout(this._overlayFallback);
       this.uiTopReady = false;
     }
@@ -918,10 +925,12 @@ class TechinWindow {
 
   /** The UI reports that the overlay with this sequence number is on screen. */
   onOverlayPainted(seq) {
-    if (seq !== this.overlaySeq || this.uiTopReady || !(this.modal || this.panel || this.sidebarPeek) || this.win.isDestroyed()) return;
+    if (seq !== this.overlaySeq || this.uiTopReady || !(this.modal || this.panel || this.sidebarPeek || this.topPeek) || this.win.isDestroyed()) return;
     clearTimeout(this._overlayFallback);
     this.uiTopReady = true;
     this.syncViews();
+    // Now the UI is on screen: things that slide in (the peeking sidebar) start moving.
+    this.sendEvent('overlay-raised', { seq });
   }
 
   closeModal(result = null, replacing = false) {
@@ -934,7 +943,7 @@ class TechinWindow {
       console.error(err);
     }
     if (replacing) return; // openModal() takes over right away, keep the UI where it is
-    if (!this.panel && !this.sidebarPeek) {
+    if (!this.panel && !this.sidebarPeek && !this.topPeek) {
       clearTimeout(this._overlayFallback);
       this.uiTopReady = false;
     }
@@ -1070,11 +1079,57 @@ class TechinWindow {
     this.layout();
   }
 
-  toggleFocusMode() {
-    // The browser's own F11: a plain switch (the curtain is only for videos going fullscreen).
-    this.focusMode = !this.focusMode;
-    this.win.setFullScreen(this.focusMode);
-    this.layout();
+  /**
+   * F11, Zen-style: the sidebar and the top bar slide away, then the window goes
+   * fullscreen; on the way back they slide in again. In fullscreen, the top edge
+   * brings the address + bookmarks bars down and the side edge the sidebar.
+   */
+  async toggleFocusMode() {
+    if (this._focusBusy) return;
+    this._focusBusy = true;
+    try {
+      if (!this.focusMode) {
+        this.sendEvent('chrome', { phase: 'out' });
+        await new Promise((r) => setTimeout(r, 240));
+        if (this.win.isDestroyed()) return;
+        this.focusMode = true;
+        this.win.setFullScreen(true);
+        this.layout();
+      } else {
+        this.setTopPeek(false);
+        this.setSidebarPeek(false);
+        this.focusMode = false;
+        this.win.setFullScreen(false);
+        this.layout();
+        this.sendEvent('chrome', { phase: 'in' });
+      }
+    } finally {
+      this._focusBusy = false;
+    }
+  }
+
+  /** F11 mode: address + bookmarks bars slide down over the page while the mouse is at the top. */
+  setTopPeek(on) {
+    on = !!on && this.focusMode && !this.htmlFullscreen;
+    if (on === !!this.topPeek) return;
+    this.topPeek = on;
+    const others = this.modal || this.panel || this.sidebarPeek;
+    if (on) {
+      if (!others) this._startOverlay();
+    } else if (!others) {
+      clearTimeout(this._overlayFallback);
+      this.uiTopReady = false;
+    }
+    this.syncViews();
+    this.sendState();
+  }
+
+  /** Mouse at the edge of the screen in F11 mode (from the page or the UI). */
+  onScreenEdge(edge) {
+    if (!this.focusMode || this.htmlFullscreen) return;
+    const side = this.ctl.settings.data.sidebarSide;
+    if (edge === 'top') this.setTopPeek(true);
+    else if (edge === side) this.setSidebarPeek(true);
   }
 
   // ---- Firefox-style fullscreen transition: a black curtain fades in over the
@@ -1202,6 +1257,15 @@ class TechinWindow {
     }, 1500);
   }
 
+  /** The star in the address bar / Ctrl+D. */
+  toggleBookmark() {
+    const tab = this.activeTab();
+    if (!tab || !/^(https?|file):/.test(tab.url)) return;
+    const on = this.ctl.bookmarks.toggle({ url: tab.url, title: tab.title, favicon: tab.favicon });
+    this.ctl.toast(on ? this.ctl.t('Yer imlerine eklendi') : this.ctl.t('Yer iminden kaldırıldı'), 'star');
+    this.scheduleState();
+  }
+
   toggleMaximize() {
     if (this.win.isFullScreen()) this.win.setFullScreen(false);
     else if (this.win.isMaximized()) this.win.unmaximize();
@@ -1243,12 +1307,13 @@ class TechinWindow {
       if (code === 'KeyH' && !shift) return run(() => this.openPanel('history'));
       if (code === 'KeyJ' && !shift) return run(() => this.openPanel('downloads'));
       if (code === 'Comma') return run(() => this.openPanel('settings'));
-      if (code === 'KeyD' && !shift) return run(() => tab && this.togglePinActive('favorite'));
+      if (code === 'KeyD' && !shift) return run(() => this.toggleBookmark()); // like Chrome/Firefox (favorites: right-click a tab)
       if (code === 'KeyP' && !shift) return run(() => tab && tab.alive && tab.wc.print());
       if (code === 'KeyU' && !shift) {
         return run(() => tab && /^https?:/.test(tab.url) && this.createTab({ url: 'view-source:' + tab.url, openerId: tab.kind === 'normal' ? tab.id : null }));
       }
       if (code === 'KeyS' && shift) return run(() => this.ctl.setSetting('sidebarHidden', !this.ctl.settings.data.sidebarHidden));
+      if (code === 'KeyB' && shift) return run(() => this.ctl.setSetting('bookmarksBar', this.ctl.settings.data.bookmarksBar === 'never' ? 'always' : 'never'));
       if (code === 'Backslash' && shift) return run(() => this.toggleSplit());
       if (code === 'KeyC' && shift) {
         return run(() => {
@@ -1412,6 +1477,7 @@ class TechinWindow {
         adblockOff: ctl.protection.isAllowlisted(tab.url),
         hoverUrl: s.showHoverUrl ? tab.hoverUrl : '',
         volume: /^https?:/.test(tab.url) ? ctl.getVolumeFor(hostOf(tab.url), this.incognito) : null,
+        bookmarked: ctl.bookmarks.isBookmarked(tab.url),
         muted: tab.muted,
         find: tab.findResult
       };
@@ -1434,6 +1500,8 @@ class TechinWindow {
         edge: m.edge || 0,
         peekWidth: m.peekWidth || 0,
         peek: !!this.sidebarPeek,
+        bmbar: m.bmbar || 0,
+        topPeek: !!this.topPeek,
         gap: m.gap,
         radius: m.radius,
         content: m.content,
@@ -1456,7 +1524,8 @@ class TechinWindow {
       find: { open: this.find.open && !!tab, text: this.find.text },
       infobar: infobar ? { id: infobar.id, type: infobar.type, origin: infobar.origin, perms: infobar.perms, url: infobar.url, host: infobar.host, username: infobar.username, mode: infobar.mode } : null,
       modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null } : null,
-      overlay: this.modal || this.panel || this.sidebarPeek ? this.overlaySeq : 0,
+      overlay: this.modal || this.panel || this.sidebarPeek || this.topPeek ? this.overlaySeq : 0,
+      bookmarks: m.bmbar || this.focusMode ? ctl.bookmarks.barState() : [],
       downloads: ctl.downloads.summary(this.incognito),
       closedCount: this.closedTabs.length,
       split: this.split ? this.split.ids : null,

@@ -1194,3 +1194,85 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
 .vol-quick .btn { flex: 1; min-width: 44px; justify-content: center; }
 .vol-quick .btn.on { background: var(--accent); color: var(--on-accent); }
 .vol-note { color: var(--card-fg-3); font-size: calc(11.5px * var(--z, 1)); line-height: 1.45; padding: 2px 12px 10px; }
+
+/* ---------------------------------------------------------------- peeking sidebar: smooth slide (v1.0.21)
+   Waits off-screen until the UI is raised (sb-open), then slides fully in; slides fully
+   out before the UI is lowered. transform/opacity only -> runs on the compositor. */
+.sb-peek #sidebar,
+.sb-peek.side-right #sidebar {
+  animation: none;
+  transform: translateX(calc(-100% - 16px));
+  opacity: 0.4;
+  transition: transform 0.23s cubic-bezier(0.22, 0.9, 0.3, 1), opacity 0.18s ease;
+  will-change: transform;
+}
+.sb-peek.side-right #sidebar { transform: translateX(calc(100% + 16px)); }
+.sb-peek.sb-open #sidebar,
+.sb-peek.sb-open.side-right #sidebar { transform: none; opacity: 1; }
+
+/* ---------------------------------------------------------------- bookmarks bar + star */
+#bmbar { position: fixed; top: var(--tbh, 40px); left: var(--cx); width: var(--cw); height: 30px; display: flex; align-items: center; gap: 2px; padding: 0 2px; z-index: 6; color: var(--fg); }
+.bare #bmbar { display: none; }
+.bm-list { flex: 1; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; position: relative; }
+.bm { flex: none; display: flex; align-items: center; gap: 6px; height: 24px; max-width: 170px; padding: 0 8px; border-radius: 7px; color: var(--fg-2); font-size: calc(12px * var(--z, 1)); }
+.bm:hover { background: var(--hover); color: var(--fg); }
+.bm:active { background: var(--press); }
+.bm img, .bm .letter { width: 16px; height: 16px; border-radius: 3px; flex: none; font-size: 9px; }
+.bm .i { width: 15px; height: 15px; flex: none; }
+.bm.folder .i { color: var(--fg-2); }
+.bm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm.off { visibility: hidden; position: absolute; pointer-events: none; }
+.bm-more { flex: none; width: 28px; height: 24px; border-radius: 7px; color: var(--fg-2); font-weight: 600; }
+.bm-more:hover { background: var(--hover); color: var(--fg); }
+#btn-star.on { color: var(--accent); }
+#btn-star.on .i { fill: currentColor; }
+.bm-dialog { width: 420px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+.bm-dialog h3 { margin: 0 0 4px; font: 600 calc(15px * var(--z, 1)) var(--font); }
+.bm-dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+
+/* ---------------------------------------------------------------- F11, Zen-style
+   Going fullscreen: the top bar slides up and the sidebar slides out, then the window
+   switches; coming back they slide in. In fullscreen the top edge brings the address +
+   bookmarks bars down over the page (top-peek). */
+#topbar, #bmbar { transition: transform 0.24s cubic-bezier(0.22, 0.9, 0.3, 1), opacity 0.2s ease; }
+#sidebar { transition: width 0.22s var(--ease), transform 0.24s cubic-bezier(0.22, 0.9, 0.3, 1), opacity 0.2s ease; }
+.chrome-out #topbar, .chrome-out #bmbar { transform: translateY(-110%); opacity: 0; }
+.chrome-out #sidebar { transform: translateX(-105%); opacity: 0; }
+.chrome-out.side-right #sidebar { transform: translateX(105%); }
+.chrome-out #content-shadow { opacity: 0; }
+
+.bare.top-peek #topbar {
+  display: block;
+  z-index: 40;
+  background: linear-gradient(180deg, var(--g1), var(--g2)), var(--card);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  transform: translateY(-105%);
+}
+.bare.top-peek #bmbar {
+  display: flex;
+  z-index: 39;
+  left: 0;
+  width: 100%;
+  padding: 0 10px;
+  top: var(--tbh, 40px);
+  background: linear-gradient(180deg, var(--g2), var(--g2)), var(--card);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+  transform: translateY(calc(-100% - var(--tbh, 40px)));
+}
+.bare.top-peek.top-open #topbar, .bare.top-peek.top-open #bmbar { transform: none; opacity: 1; }
+.bare .tb-nav { left: 96px; }
+.top-peek.page-visible #bg { clip-path: var(--hole); }
+.top-peek.page-visible:not(.panel-open) #content { background: transparent; }
+.top-peek.page-visible:not(.panel-open) #content > :not(#strip) { visibility: hidden; }
+/* the sidebar peeking in F11 mode (no auto-hide column there) */
+.bare.sb-peek #sidebar { display: flex; top: 8px; }
+
+/* ---------------------------------------------------------------- import */
+.imp-row { flex-wrap: wrap; gap: 10px; }
+.imp-row .txt { min-width: 160px; }
+.imp-res { color: var(--card-fg-3); }
+.imp-check { display: flex; align-items: center; gap: 6px; font-size: calc(12.5px * var(--z, 1)); color: var(--card-fg-2); }
+.imp-check input { accent-color: var(--accent); }
+.imp-pw ol { margin: 6px 0 10px; padding-left: 20px; color: var(--card-fg-2); font-size: calc(12.5px * var(--z, 1)); line-height: 1.6; }
+.imp-pw .btn { align-self: flex-start; }
+.imp-pw .btn .i { width: 14px; height: 14px; margin-right: 4px; }
