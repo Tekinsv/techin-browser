@@ -2,11 +2,12 @@
 
 A fast, private, Chromium-based browser for Windows with an Arc-style sidebar.
 
-- **Arc-style UI:** favorites, spaces, pinned tabs, command bar (Ctrl+T), split view, hideable / icon-strip sidebar
-- **Private & secure:** sandboxed tabs, built-in ad & tracker blocker, malware and phishing protection, HTTPS-only mode, per-site permissions
+- **Arc-style UI:** favorites, spaces, pinned tabs, command bar (Ctrl+T), split view, hideable / icon-strip sidebar, bookmarks bar
+- **Private & secure:** sandboxed tabs, built-in ad & tracker blocker, malware and phishing protection, HTTPS-only mode, per-site permissions, password manager (encrypted with Windows DPAPI)
 - **Low memory:** tabs you don't use go to sleep and resume where they left off
 - **Smooth:** momentum scrolling and GPU rendering for Shorts/Reels-style feeds
 - **DRM:** Widevine (castlabs Electron) for protected video
+- **Import** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera, Firefox and Zen
 - **Automatic updates** from GitHub Releases
 - Turkish and English interface
 
@@ -14,6 +15,26 @@ A fast, private, Chromium-based browser for Windows with an Arc-style sidebar.
 
 Get the latest `Techin-Browser-Setup-x.y.z.exe` from [Releases](https://github.com/Tekinsv/techin-browser/releases/latest).
 The installer is not code-signed yet, so Windows SmartScreen may ask you to confirm (**More info → Run anyway**).
+
+## Uninstall
+
+Windows **Settings → Apps → Installed apps → Techin Browser → Uninstall**.
+Your data is kept in `%APPDATA%\Techin Browser`; delete that folder to remove it as well.
+
+## Privacy
+
+No accounts, no telemetry. See [PRIVACY.md](PRIVACY.md) for what is stored and which services the browser contacts.
+
+## Code signing policy
+
+Windows releases are built by [GitHub Actions](.github/workflows/release.yml) from this repository and signed during that build.
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org) *(application pending — current releases are unsigned)*.
+
+- Committers and reviewers: [Tekinsv](https://github.com/Tekinsv)
+- Approvers: [Tekinsv](https://github.com/Tekinsv)
+
+Every release is approved by hand before it is signed.
 
 ## Development
 
@@ -27,3 +48,8 @@ npm run dist       # build the installer into dist/
 ```
 
 Details (in Turkish): [KURULUM.md](KURULUM.md)
+
+## License
+
+[Mozilla Public License 2.0](LICENSE). Third-party components keep their own licenses
+(Electron/Chromium: MIT/BSD, notices ship with the app; Widevine: Google's terms).

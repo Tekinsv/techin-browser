@@ -4,6 +4,7 @@
   "version": "1.0.21",
   "description": "A fast, private, Chromium-based browser with an Arc-style sidebar",
   "author": "Tekin",
+  "license": "MPL-2.0",
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
@@ -18,7 +19,7 @@
   "build": {
     "appId": "com.techin.browser",
     "productName": "Techin Browser",
-    "copyright": "Techin Browser",
+    "copyright": "Copyright © 2026 Tekin",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "dist"

@@ -1,9 +1,12 @@
 # Yeni sürüm yayınlar: sürümü artırır, kurulum dosyasını üretir, GitHub Release oluşturur.
 # Kullanım:  powershell -ExecutionPolicy Bypass -File yayinla.ps1 -Surum 1.0.2 -Notlar "Neler değişti"
+#   -Bulut : bu bilgisayarda paketlemez; kodu gönderir ve GitHub Actions'taki "Release"
+#            akışını başlatır (orada derlenir, SignPath ile imzalanır, yayınlanır).
 # Kurulu Techin Browser'lar bu sürümü 6 saat içinde (veya açılışta) görür ve "Güncelleme var" der.
 param(
   [Parameter(Mandatory = $true)][string]$Surum,
-  [string]$Notlar = ""
+  [string]$Notlar = "",
+  [switch]$Bulut
 )
 $ErrorActionPreference = "Stop"
 $env:Path = "T:\Tools\node;T:\Tools\gh\bin;" + $env:Path
@@ -19,13 +22,25 @@ if ($Surum -notmatch '^\d+\.\d+\.\d+$') { throw "Sürüm 1.2.3 biçiminde olmal�
 npm version $Surum --no-git-tag-version --allow-same-version | Out-Null
 npm test
 if ($LASTEXITCODE -ne 0) { throw "Birim testleri başarısız" }
+if (-not $Notlar) { $Notlar = "Techin Browser $Surum" }
+
+if ($Bulut) {
+  git add -A
+  git diff --cached --quiet
+  if ($LASTEXITCODE -ne 0) { git commit -q -m "Techin Browser $Surum" }
+  git push -q origin main
+  gh workflow run release.yml --repo Tekinsv/techin-browser --ref main -f "version=$Surum" -f "notes=$Notlar"
+  if ($LASTEXITCODE -ne 0) { throw "GitHub Actions başlatılamadı" }
+  Write-Host "Başlatıldı: v$Surum - ilerleme: https://github.com/Tekinsv/techin-browser/actions"
+  exit 0
+}
+
 npx electron-builder --win nsis --publish never
 if ($LASTEXITCODE -ne 0) { throw "Paketleme başarısız" }
 
 $exe = "dist\Techin-Browser-Setup-$Surum.exe"
 $files = @($exe, "$exe.blockmap", "dist\latest.yml")
 foreach ($f in $files) { if (-not (Test-Path $f)) { throw "Eksik dosya: $f" } }
-if (-not $Notlar) { $Notlar = "Techin Browser $Surum" }
 git add -A
 git diff --cached --quiet
 if ($LASTEXITCODE -ne 0) { git commit -q -m "Techin Browser $Surum" }

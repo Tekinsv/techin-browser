@@ -1,0 +1,152 @@
+# Builds, signs and publishes a Windows release from this repository.
+#
+#   1. unit tests, then the app folder is built (dist/win-unpacked)
+#   2. Techin Browser.exe is Authenticode-signed through SignPath
+#   3. Widevine VMP signature (castlabs EVS) - must come after Authenticode
+#   4. the NSIS installer is built from that folder and signed through SignPath
+#   5. latest.yml / blockmap are recomputed for the signed installer and the
+#      GitHub release is created (installed copies auto-update from it)
+#
+# Started by `yayinla.ps1 -Bulut` or by hand (Actions -> Release -> Run workflow).
+# Secrets: EVS_ACCOUNT_NAME, EVS_PASSWD (castlabs EVS), SIGNPATH_API_TOKEN.
+# Variables: SIGNPATH_ORGANIZATION_ID. Without SIGNPATH_API_TOKEN the release
+# is built and published unsigned.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, must match package.json (e.g. 1.0.22)
+        required: true
+      notes:
+        description: Release notes
+        required: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+      INSTALLER: Techin-Browser-Setup-${{ inputs.version }}.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check version
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($v -ne '${{ inputs.version }}') { throw "package.json is $v, not ${{ inputs.version }}" }
+
+      - name: Install
+        shell: pwsh
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+          python -m pip install --upgrade castlabs-evs
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build app folder
+        run: npx electron-builder --win dir --publish never
+
+      - name: Upload exe for signing
+        if: env.SIGN == 'true'
+        id: upload-exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: exe-unsigned
+          path: dist/win-unpacked/Techin Browser.exe
+          if-no-files-found: error
+
+      - name: Sign exe (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: techin-browser
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload-exe.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed-exe
+
+      - name: Put signed exe back
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item -Force 'signed-exe/Techin Browser.exe' 'dist/win-unpacked/Techin Browser.exe'
+          $s = Get-AuthenticodeSignature 'dist/win-unpacked/Techin Browser.exe'
+          if ($s.Status -ne 'Valid') { throw "exe signature: $($s.Status)" }
+
+      - name: Widevine VMP signature
+        env:
+          EVS_ACCOUNT_NAME: ${{ secrets.EVS_ACCOUNT_NAME }}
+          EVS_PASSWD: ${{ secrets.EVS_PASSWD }}
+          EVS_NO_ASK: '1'
+        run: |
+          python -m castlabs_evs.vmp sign-pkg dist/win-unpacked
+          python -m castlabs_evs.vmp verify-pkg dist/win-unpacked
+
+      - name: Build installer
+        run: npx electron-builder --win nsis --prepackaged dist/win-unpacked --publish never
+
+      - name: Upload installer for signing
+        if: env.SIGN == 'true'
+        id: upload-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-unsigned
+          path: dist/${{ env.INSTALLER }}
+          if-no-files-found: error
+
+      - name: Sign installer (SignPath)
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: techin-browser
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed-setup
+
+      - name: Put signed installer back
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item -Force "signed-setup/$env:INSTALLER" "dist/$env:INSTALLER"
+          $s = Get-AuthenticodeSignature "dist/$env:INSTALLER"
+          if ($s.Status -ne 'Valid') { throw "installer signature: $($s.Status)" }
+
+      - name: Update metadata
+        run: node scripts/finalize-release.js dist/${{ env.INSTALLER }}
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          $notes = if ($env:NOTES) { $env:NOTES } else { 'Techin Browser ${{ inputs.version }}' }
+          gh release create 'v${{ inputs.version }}' "dist/$env:INSTALLER" "dist/$env:INSTALLER.blockmap" dist/latest.yml `
+            --target $env:GITHUB_SHA --title 'Techin Browser ${{ inputs.version }}' --notes $notes
