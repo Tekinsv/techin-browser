@@ -22,6 +22,10 @@ on:
       notes:
         description: Release notes
         required: false
+      dry_run:
+        description: Test build only - keep the files as a workflow artifact, publish nothing
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -141,7 +145,19 @@ jobs:
       - name: Update metadata
         run: node scripts/finalize-release.js dist/${{ env.INSTALLER }}
 
+      - name: Keep test build
+        if: inputs.dry_run
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-build
+          path: |
+            dist/${{ env.INSTALLER }}
+            dist/${{ env.INSTALLER }}.blockmap
+            dist/latest.yml
+          retention-days: 3
+
       - name: Publish release
+        if: ${{ !inputs.dry_run }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
