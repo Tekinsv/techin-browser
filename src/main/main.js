@@ -71,7 +71,7 @@ const sessionCookies = require('./sessioncookies');
 const sessionCookieFile = () => path.join(USER_DATA, 'session-cookies.bin'); // USER_DATA is set further down
 const { ASKABLE } = require('./policy');
 const { ZOOM_STEPS } = require('./tab');
-const { SEARCH_ENGINES, buildSearchUrl, originOf, normalizeInput, safeURL } = require('./url');
+const { SEARCH_ENGINES, buildSearchUrl, originOf, normalizeInput, safeURL, hostOf } = require('./url');
 const i18n = require('../shared/i18n');
 
 const USER_DATA = app.getPath('userData');
@@ -140,7 +140,7 @@ if (!SELFTEST && !app.requestSingleInstanceLock()) {
 }
 
 function sanitizeSites(obj) {
-  const out = { permissions: {}, zoom: {} };
+  const out = { permissions: {}, zoom: {}, volume: {} };
   const perms = obj && typeof obj.permissions === 'object' ? obj.permissions : {};
   for (const [origin, p] of Object.entries(perms)) {
     if (originOf(origin + '/') !== origin || !p || typeof p !== 'object') continue;
@@ -152,7 +152,18 @@ function sanitizeSites(obj) {
   for (const [host, z] of Object.entries(zoom)) {
     if (/^[a-z0-9.-]{1,253}$/i.test(host) && ZOOM_STEPS.includes(z) && z !== 1) out.zoom[host] = z;
   }
+  // per-site volume in percent (0-200); 100 is the default and isn't stored
+  const vol = obj && typeof obj.volume === 'object' ? obj.volume : {};
+  for (const [host, v] of Object.entries(vol)) {
+    if (/^[a-z0-9.-]{1,253}$/i.test(host) && Number.isInteger(v) && v >= 0 && v <= 200 && v !== 100) out.volume[host] = v;
+  }
   return out;
+}
+
+/** Site key for the per-site volume: host without "www.". */
+function volumeKey(host) {
+  host = String(host || '').toLowerCase();
+  return host.startsWith('www.') ? host.slice(4) : host;
 }
 
 function timeout(ms) {
@@ -201,6 +212,7 @@ class Controller {
     this.certs = new Map();
     this.incognitoPerms = new Map();
     this.incognitoZoom = new Map();
+    this.incognitoVolume = new Map();
     this.incognitoSessions = 0;
     this.sessionFrozen = false;
     this.quitting = false;
@@ -753,6 +765,39 @@ class Controller {
     if (factor === 1) delete this.sites.data.zoom[host];
     else this.sites.data.zoom[host] = factor;
     this.sites.save();
+  }
+
+  // ---- per-site volume (0-200 %), applied by src/preload/page.js to the site's video/audio
+
+  getVolumeFor(host, incognito) {
+    host = volumeKey(host);
+    if (incognito && this.incognitoVolume.has(host)) return this.incognitoVolume.get(host);
+    return this.sites.data.volume[host] ?? 100;
+  }
+
+  setVolumeFor(host, value, incognito) {
+    host = volumeKey(host);
+    if (!host) return;
+    const v = Math.max(0, Math.min(200, Math.round(value)));
+    if (incognito) this.incognitoVolume.set(host, v);
+    else {
+      if (v === 100) delete this.sites.data.volume[host];
+      else this.sites.data.volume[host] = v;
+      this.sites.save();
+    }
+    // live: every open tab of that site, all its frames (embedded players too)
+    for (const w of this.windows) {
+      if (w.incognito !== !!incognito) continue;
+      for (const tab of w.tabs.values()) {
+        if (!tab.alive || volumeKey(hostOf(tab.url)) !== host) continue;
+        for (const fr of tab.wc.mainFrame.framesInSubtree) {
+          try {
+            fr.send('techin:volume', v);
+          } catch {}
+        }
+      }
+      w.scheduleState();
+    }
   }
 
   setAdblockForHost(host, enabled) {

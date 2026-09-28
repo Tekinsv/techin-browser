@@ -525,6 +525,10 @@
     'Güncellensin mi? İndirme arka planda olur; bitince tarayıcı yeni sürümle kendiliğinden yeniden açılır, sekmeleriniz geri gelir.': 'Update now? It downloads in the background; when done the browser reopens on the new version with your tabs.',
     'İndiriliyor… %{0} — bitince tarayıcı yeni sürümle yeniden açılacak.': 'Downloading… {0}% — the browser reopens on the new version when done.',
     'Güncelleme kuruluyor, tarayıcı yeniden açılacak…': 'Installing the update, the browser will reopen…',
+    // v1.0.20
+    'Bu sitenin sesi': "This site's volume",
+    Sessiz: 'Mute',
+    'Site açıldığında bu ses kullanılır. %100 üstü Netflix gibi şifreli videolarda uygulanmaz.': "Used whenever this site is open. Above 100% isn't applied to protected videos (Netflix etc.).",
     // v1.0.17
     'Yan ekranda aç (tam ekran)': 'Open on the other screen (fullscreen)',
     'Diğer ekrana geri gönder': 'Send back to the other screen',

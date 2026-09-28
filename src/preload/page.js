@@ -269,6 +269,115 @@ if (/^https?:$/.test(location.protocol)) {
   }, token);
 }
 
+// ------------------------------------------------------------ 3d) per-site volume (0-200 %)
+// The browser's volume for this site multiplies whatever the site's own volume
+// control says. The site keeps seeing its own value (the volume getter returns
+// it), so its slider doesn't jump. Up to 100 % only the real volume changes;
+// above 100 % the element is routed through a Web Audio gain - only where that is
+// safe: never for DRM (EME) media and never for cross-origin media without CORS,
+// which Web Audio would turn into silence.
+if (/^https?:$/.test(location.protocol)) {
+  const token = 'techin-vol-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  inMain((token) => {
+    const proto = HTMLMediaElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'volume');
+    if (!desc || !desc.get || !desc.set) return;
+    let factor = 1;
+    const wanted = new WeakMap(); // element -> the volume the site asked for
+    const known = new Set();
+    const gains = new WeakMap();
+    let ctx = null;
+    const boostable = (el) => {
+      if (el.mediaKeys) return false;
+      const src = el.currentSrc || el.src || '';
+      if (!src) return false;
+      if (/^(blob|data):/.test(src)) return true;
+      try {
+        return new URL(src, location.href).origin === location.origin || el.crossOrigin !== null;
+      } catch (e) {
+        return false;
+      }
+    };
+    const route = (el) => {
+      if (gains.has(el)) return gains.get(el);
+      try {
+        ctx = ctx || new AudioContext();
+        const g = ctx.createGain();
+        ctx.createMediaElementSource(el).connect(g).connect(ctx.destination);
+        gains.set(el, g);
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        return g;
+      } catch (e) {
+        return null;
+      }
+    };
+    const update = (el) => {
+      known.add(el);
+      const want = wanted.has(el) ? wanted.get(el) : 1;
+      let g = gains.get(el);
+      if (factor > 1 && !g && boostable(el)) g = route(el);
+      if (g) g.gain.value = factor > 1 ? factor : 1;
+      desc.set.call(el, Math.max(0, Math.min(1, want * Math.min(1, factor))));
+    };
+    try {
+      Object.defineProperty(proto, 'volume', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          if (wanted.has(this)) return wanted.get(this);
+          // we scaled it but the site never set a volume: it still expects the default 1
+          return known.has(this) ? 1 : desc.get.call(this);
+        },
+        set(v) {
+          const n = Number(v);
+          if (!(n >= 0 && n <= 1)) return desc.set.call(this, v); // let the browser throw as usual
+          wanted.set(this, n);
+          update(this);
+        }
+      });
+    } catch (e) {
+      return;
+    }
+    document.addEventListener(
+      'play',
+      (e) => {
+        if (e.target instanceof HTMLMediaElement && factor !== 1) update(e.target);
+      },
+      true
+    );
+    // The level usually arrives before the page's players exist: apply it as they load.
+    for (const type of ['DOMContentLoaded', 'loadedmetadata']) {
+      document.addEventListener(
+        type,
+        (e) => {
+          if (factor === 1) return;
+          if (e.target instanceof HTMLMediaElement) update(e.target);
+          else for (const el of document.querySelectorAll('video, audio')) update(el);
+        },
+        true
+      );
+    }
+    document.addEventListener(token, (e) => {
+      const next = Math.max(0, Math.min(2, Number(e.detail) / 100));
+      if (!Number.isFinite(next) || next === factor) return;
+      factor = next;
+      for (const el of new Set([...known, ...document.querySelectorAll('video, audio')])) {
+        if (!el.isConnected && !known.has(el)) continue;
+        update(el);
+      }
+      for (const el of known) if (!el.isConnected) known.delete(el);
+    });
+  }, token);
+  const apply = (v) => {
+    if (typeof v === 'number') document.dispatchEvent(new CustomEvent(token, { detail: v }));
+  };
+  ipcRenderer
+    .invoke('techin:volume-get')
+    .then((v) => v !== 100 && apply(v))
+    .catch(() => {});
+  ipcRenderer.on('techin:volume', (_e, v) => apply(v));
+}
+
 // ------------------------------------------------------------ 4) passwords
 // Everything here runs in the isolated world: page scripts can't call
 // ipcRenderer, can't see our suggestion list (closed shadow root) and can't

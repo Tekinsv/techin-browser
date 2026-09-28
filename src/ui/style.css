@@ -1178,3 +1178,19 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
 .compact #favorites.empty-drop { display: grid; min-height: 40px; }
 #favorites.empty-drop::before { content: attr(data-hint); grid-column: 1 / -1; align-self: center; text-align: center; font-size: calc(11px * var(--z, 1)); color: var(--fg-2); padding: 0 8px; }
 .compact #favorites.empty-drop::before { content: none; }
+
+/* ---------------------------------------------------------------- per-site volume */
+#btn-volume { position: relative; }
+#btn-volume .vol-badge { position: absolute; right: 1px; bottom: 2px; font: 600 calc(8.5px * var(--z, 1)) / 1 var(--font); color: var(--accent); pointer-events: none; }
+#btn-volume.changed { color: var(--fg); }
+.volume-pop { width: 300px; padding: 6px; display: flex; flex-direction: column; }
+.volume-pop .hd { display: flex; gap: 12px; align-items: center; padding: 12px 12px 6px; }
+.volume-pop .hd .ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); flex: none; }
+.volume-pop .hd small { display: block; color: var(--card-fg-3); font-size: calc(12px * var(--z, 1)); }
+.vol-row { display: flex; align-items: center; gap: 12px; padding: 8px 12px; }
+.vol-row input[type="range"] { flex: 1; accent-color: var(--accent); }
+.vol-val { width: 48px; text-align: right; font: 600 calc(15px * var(--z, 1)) var(--font); font-variant-numeric: tabular-nums; }
+.vol-quick { display: flex; gap: 6px; padding: 4px 12px 8px; flex-wrap: wrap; }
+.vol-quick .btn { flex: 1; min-width: 44px; justify-content: center; }
+.vol-quick .btn.on { background: var(--accent); color: var(--on-accent); }
+.vol-note { color: var(--card-fg-3); font-size: calc(11.5px * var(--z, 1)); line-height: 1.45; padding: 2px 12px 10px; }

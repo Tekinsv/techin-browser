@@ -42,6 +42,7 @@ function startServer() {
     '/favpage': '<!doctype html><title>Fav</title><link rel="icon" href="/fav.png"><script>setTimeout(() => history.replaceState(null, "", "/favpage?pp=1"), 60)</script><h1>icon</h1>',
     // a chat like Instagram DMs: newest message at the bottom, scroller is flex column-reverse
     '/chat': '<!doctype html><title>Chat</title><style>body{margin:0}#c{height:400px;width:420px;overflow-y:auto;display:flex;flex-direction:column-reverse;font:16px system-ui}#c div{padding:14px;border-bottom:1px solid #ccc}</style><div id="c">' + Array.from({ length: 80 }, (_, i) => '<div>mesaj ' + (80 - i) + '</div>').join('') + '</div>',
+    '/vol': '<!doctype html><title>Vol</title><audio id="a" loop src="/tone.wav"></audio>',
     '/fs': '<!doctype html><title>FS</title><button id="b" style="margin:40px;font-size:24px" onclick="document.documentElement.requestFullscreen()">tam ekran</button>',
     '/media': '<!doctype html><title>Media</title><audio id="a" autoplay src="/tone.wav"></audio>',
     '/medialink': '<!doctype html><title>MediaLinks</title><a id="l" href="/media" style="display:block;padding:40px;font-size:30px">ses</a>',
@@ -625,6 +626,10 @@ async function run(ctl) {
         for (const t2 of [...w.tabs.values()]) if (t2.url.startsWith(base + '/b')) t2.close({ force: true });
         w.activateTab(tab.id);
         ok('Sık kullanılan / sabitlenmiş siteler de yan ekranda açılabiliyor', !!favOk, JSON.stringify({ opened: !!opened, side: !!side2 }));
+        // the closed side window leaves the focus nowhere: give it back to the test window
+        w.win.focus();
+        w.win.setAlwaysOnTop(true);
+        await sleep(400);
       }
     }
 
@@ -642,6 +647,8 @@ async function run(ctl) {
         }
         await sleep(700);
       };
+      await ct.wc.executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))'); // painted once: input reaches it
+      await sleep(150);
       const t0 = await top();
       await wheel(false, 4); // up into older messages
       const tUp = await top();
@@ -650,6 +657,36 @@ async function run(ctl) {
       ct.close({ force: true });
       w.activateTab(tab.id);
       ok('Instagram sohbeti gibi ters kutuda yukarı kaydırma geri alta atlamıyor', t0 === 0 && tUp < -200 && tDown < tUp + 250 && tDown < -50, JSON.stringify({ t0, tUp, tDown }));
+    }
+
+    // --- per-site volume: the site keeps its own value, the real volume follows the browser's setting
+    {
+      const vt = w.createTab({ url: base + '/vol' });
+      await loaded(vt, 10000);
+      await vt.wc.executeJavaScript("document.getElementById('a').play().then(() => true)", true).catch(() => null);
+      await sleep(300);
+      // a fresh isolated world sees the untouched volume property = the real volume
+      const real = () => vt.wc.executeJavaScriptInIsolatedWorld(1999, [{ code: "Math.round(document.getElementById('a').volume * 100)" }]);
+      const site = () => vt.wc.executeJavaScript("Math.round(document.getElementById('a').volume * 100)");
+      ctl.setVolumeFor('127.0.0.1', 50, false);
+      await sleep(300);
+      const r1 = { site: await site(), real: await real() };
+      await vt.wc.executeJavaScript("document.getElementById('a').volume = 0.8; true");
+      const r2 = { site: await site(), real: await real() };
+      vt.wc.reload();
+      await loaded(vt, 10000);
+      await vt.wc.executeJavaScript("document.getElementById('a').play().then(() => true)", true).catch(() => null);
+      await sleep(400);
+      const r3 = { site: await site(), real: await real() };
+      // the toolbar button opens the volume panel
+      await w.uiView.webContents.executeJavaScript("document.getElementById('btn-volume').click(); true");
+      const pop = await waitFor(() => w.modal && w.modal.type === 'volume', 2000, 50);
+      const popUi = await w.uiView.webContents.executeJavaScript("!!document.querySelector('.volume-pop input[type=range]') && document.querySelector('.vol-val').textContent");
+      w.closeModal();
+      ctl.setVolumeFor('127.0.0.1', 100, false);
+      vt.close({ force: true });
+      w.activateTab(tab.id);
+      ok('Siteye özel ses ayarı: sitenin kendi sesi bozulmadan gerçek ses kısılıyor ve hatırlanıyor', r1.site === 100 && r1.real === 50 && r2.site === 80 && r2.real === 40 && r3.real === 50 && !!pop && popUi === '%50', JSON.stringify({ r1, r2, r3, pop: !!pop, popUi }));
     }
 
     // --- session cookies (e.g. YouTube's theater mode "wide=1") survive a restart, encrypted on disk

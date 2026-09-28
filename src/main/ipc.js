@@ -5,7 +5,7 @@
 const { ipcMain, dialog, shell, app } = require('electron');
 const palette = require('./palette');
 const { ID_RE } = require('./library');
-const { originOf, isNavigable } = require('./url');
+const { originOf, isNavigable, hostOf } = require('./url');
 const { ASKABLE } = require('./policy');
 
 const UI_URL_PREFIX = 'techin-ui://app/ui/';
@@ -43,6 +43,15 @@ const HANDLERS = {
   'tab.new': (ctl, w) => w.newTab(),
   'tab.close': (ctl, w, a) => id(a.tabId) && w.closeTab(a.tabId),
   'tab.mute': (ctl, w, a) => id(a.tabId) && w.tabs.get(a.tabId)?.toggleMute(),
+  // per-site volume popover next to the passwords button
+  'volume.open': (ctl, w) => {
+    const tab = w.activeTab();
+    if (tab && /^https?:/.test(tab.url)) w.openModal({ type: 'volume', data: { host: hostOf(tab.url), tabId: tab.id } });
+  },
+  'site.volume': (ctl, w, a) => {
+    const tab = w.activeTab();
+    if (tab && /^https?:/.test(tab.url) && int(a.value, 0, 200) !== null) ctl.setVolumeFor(hostOf(tab.url), a.value, w.incognito);
+  },
   'tab.move': (ctl, w, a) => id(a.tabId) && int(a.index, 0, 10000) !== null && w.moveTab(a.tabId, a.index),
   'tab.pin': (ctl, w, a) => {
     if (!id(a.tabId) || !['pinned', 'favorite'].includes(a.kind)) return;
@@ -247,6 +256,18 @@ function installIpc(ctl) {
     if (!fn) throw new Error('Unknown action');
     const result = await fn(ctl, win, args && typeof args === 'object' ? args : {});
     return result === undefined || typeof result === 'boolean' || result === null || typeof result === 'object' ? result ?? null : null;
+  });
+
+  // Pages ask for their site's volume when they load (src/preload/page.js). The
+  // site is the tab's top-level page, so embedded players follow the site you're on.
+  ipcMain.handle('techin:volume-get', (event) => {
+    const tab = ctl.tabByWcId(event.sender.id);
+    if (!tab) return 100;
+    let url = tab.url;
+    try {
+      url = (event.senderFrame && event.senderFrame.top && event.senderFrame.top.url) || url;
+    } catch {}
+    return ctl.getVolumeFor(hostOf(url), tab.win.incognito);
   });
 
   // A page announces it is about to enter/leave fullscreen (src/preload/page.js):

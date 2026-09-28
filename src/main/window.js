@@ -1411,6 +1411,8 @@ class TechinWindow {
         sleeping: tab.sleeping,
         adblockOff: ctl.protection.isAllowlisted(tab.url),
         hoverUrl: s.showHoverUrl ? tab.hoverUrl : '',
+        volume: /^https?:/.test(tab.url) ? ctl.getVolumeFor(hostOf(tab.url), this.incognito) : null,
+        muted: tab.muted,
         find: tab.findResult
       };
     }

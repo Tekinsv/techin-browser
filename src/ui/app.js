@@ -290,6 +290,20 @@
     const inSplit = !!(S.split && a && S.split.includes(a.id));
     $('btn-split').classList.toggle('on', inSplit);
     $('btn-split').disabled = !a;
+    // per-site volume: hidden where it doesn't apply, shows the level when it isn't 100 %
+    const vb = $('btn-volume');
+    const vol = a && typeof a.volume === 'number' ? a.volume : null;
+    vb.classList.toggle('hidden', vol === null);
+    if (vol !== null) {
+      const icon = vol === 0 || a.muted ? 'volumeX' : 'volume';
+      if (vb.dataset.icon !== icon) {
+        vb.dataset.icon = icon;
+        vb.querySelector('svg')?.remove();
+        vb.prepend(ico(icon));
+      }
+      setText(vb.querySelector('.vol-badge'), vol === 100 ? '' : String(vol));
+      vb.classList.toggle('changed', vol !== 100);
+    }
     renderUpdatePill();
   }
 
@@ -525,6 +539,7 @@
     cmd('panel.open', { name: 'settings' });
   };
   $('btn-passwords').addEventListener('click', () => openSettings('passwords'));
+  $('btn-volume').addEventListener('click', () => (S && S.modal && S.modal.type === 'volume' ? closeModal() : cmd('volume.open')));
   $('btn-settings').addEventListener('click', () => openSettings(settingsSection === 'passwords' ? 'appearance' : settingsSection));
   $('btn-appmenu').addEventListener('click', () => cmd('menu.app'));
   $('btn-sidebar').addEventListener('click', () => cmd('settings.set', { key: 'sidebarHidden', value: !S.settings.sidebarHidden }));
@@ -2003,7 +2018,7 @@
     const box = $('modal');
     box.replaceChildren();
     if (!m) return;
-    const builders = { palette: buildPalette, siteinfo: buildSiteInfo, picker: buildPicker, auth: buildAuth, space: buildSpace, update: buildUpdate };
+    const builders = { palette: buildPalette, siteinfo: buildSiteInfo, volume: buildVolume, picker: buildPicker, auth: buildAuth, space: buildSpace, update: buildUpdate };
     const el = (builders[m.type] || (() => null))(m);
     if (el) box.append(el);
   }
@@ -2214,6 +2229,46 @@
       }
       box.append(sect(t('Veriler'), h('div', { class: 'prow' }, ico('cookie'), h('span', { text: t('{0} çerez', d.cookies) }), h('button', { class: 'btn small', onclick: () => cmd('site.clearData', { origin: d.origin }) }, t('Temizle')))));
     }
+    return box;
+  }
+
+  // ---- per-site volume
+  function buildVolume(m) {
+    const box = h('div', { class: 'pop volume-pop' });
+    const anchor = $('btn-volume').getBoundingClientRect();
+    box.style.setProperty('left', `${Math.round(Math.max(10, Math.min(S.layout.W - 320, anchor.left + anchor.width / 2 - 150)))}px`);
+    box.style.setProperty('top', `${Math.round(anchor.bottom + 8)}px`);
+    const val = h('b', { class: 'vol-val' });
+    const slider = h('input', { type: 'range', min: '0', max: '200', step: '5', 'aria-label': t('Bu sitenin sesi') });
+    const send = debounce((v) => cmd('site.volume', { value: v }), 40);
+    const paint = (v) => {
+      val.textContent = `%${v}`;
+      slider.value = String(v);
+      slider.style.setProperty('--p', `${v / 2}%`);
+      for (const b of quick.children) b.classList.toggle('on', Number(b.dataset.v) === v);
+    };
+    const quick = h('div', { class: 'vol-quick' });
+    for (const v of [0, 50, 100, 150, 200]) {
+      const b = h('button', { class: 'btn small', dataset: { v: String(v) } }, v === 0 ? t('Sessiz') : `%${v}`);
+      b.addEventListener('click', () => {
+        paint(v);
+        cmd('site.volume', { value: v });
+      });
+      quick.append(b);
+    }
+    slider.addEventListener('input', () => {
+      const v = Number(slider.value);
+      paint(v);
+      send(v);
+    });
+    box.append(
+      h('div', { class: 'hd' }, h('span', { class: 'ico' }, ico('volume')), h('div', null, h('b', { text: t('Bu sitenin sesi') }), h('small', { text: m.data.host }))),
+      h('div', { class: 'vol-row' }, slider, val),
+      quick,
+      h('small', { class: 'vol-note', text: t('Site açıldığında bu ses kullanılır. %100 üstü Netflix gibi şifreli videolarda uygulanmaz.') })
+    );
+    paint(S.active && typeof S.active.volume === 'number' ? S.active.volume : 100);
+    setTimeout(() => slider.focus(), 0);
     return box;
   }
 
