@@ -138,6 +138,7 @@ class TechinWindow {
     }
     w.on('focus', () => {
       this.ctl.lastFocused = this;
+      this.ctl.extensions?.onWindowFocused(this);
       this.scheduleState();
     });
     w.on('blur', () => this.scheduleState());
@@ -390,6 +391,8 @@ class TechinWindow {
       for (const v of desired) this.win.contentView.addChildView(v);
       this.uiOnTop = false;
     }
+    // An extension's toolbar popup stays above everything.
+    this.ctl.extensions?.raise(this);
     this.layout();
   }
 
@@ -515,6 +518,7 @@ class TechinWindow {
     if (focus) this.focusPage();
     this.scheduleState();
     this.ctl.saveSessionSoon();
+    if (prev !== tab) this.ctl.extensions?.onTabActivated(this, tab);
   }
 
   removeTab(id) {
@@ -656,6 +660,7 @@ class TechinWindow {
 
   tabChanged(tab) {
     if (tab.id === this.activeTabId || tab.kind !== 'normal' || tab.spaceId === this.activeSpaceId) this.scheduleState();
+    this.ctl.extensions?.onTabChanged(tab);
   }
 
   onTabNavigated(tab) {
@@ -1537,6 +1542,7 @@ class TechinWindow {
         threats: ctl.protection.counts()
       },
       topSites: this.activeTabId || this.incognito ? null : ctl.history.topSites(8),
+      extensions: ctl.extensions ? ctl.extensions.uiState(this) : null,
       meta: ctl.meta
     };
   }

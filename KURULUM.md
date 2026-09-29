@@ -53,6 +53,9 @@ powershell -ExecutionPolicy Bypass -File yayinla.ps1 -Surum 1.0.2 -Notlar "Neler
 - **Düşük RAM:** kullanılmayan sekmeler uyutulur (geri/ileri geçmişi korunur), oturum geri yüklenirken
   sekmeler uykuda başlar, reklam engelleyici gereksiz yüklemeyi keser. Ayarlar → Performans'ta canlı bellek listesi.
 - **DRM:** Widevine hazır; korumalı video oynatma test edildi.
+- **Chrome eklentileri:** Chrome Web Mağazası'nda "Techin Browser'a ekle" → izinleri gösteren onay → eklenti
+  adres çubuğunun sağında (rozet, açılır pencere, sağ tık menüsü). Yönetim: Ayarlar → Eklentiler ya da yapboz düğmesi.
+  Electron'da olmayan eklenti API'lerini `src/preload/extension.js` + `src/main/extensions.js` tamamlar.
 
 ## Güvenlik
 

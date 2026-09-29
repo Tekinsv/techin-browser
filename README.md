@@ -7,6 +7,7 @@ A fast, private, Chromium-based browser for Windows with an Arc-style sidebar.
 - **Low memory:** tabs you don't use go to sleep and resume where they left off
 - **Smooth:** momentum scrolling and GPU rendering for Shorts/Reels-style feeds
 - **DRM:** Widevine (castlabs Electron) for protected video
+- **Chrome extensions** from the Chrome Web Store: toolbar buttons with popups, context menus, options pages (most extensions work; a few Chrome-only APIs don't)
 - **Import** bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera, Firefox and Zen
 - **Automatic updates** from GitHub Releases
 - Turkish and English interface

@@ -146,10 +146,11 @@ class Tab {
     this.ctl.registerTab(this.wc.id, this);
     this.wc.setAudioMuted(this.muted);
     this._wire(this.wc);
+    this.ctl.extensions?.attachTab(this, this.wc);
   }
 
   load(url) {
-    if (!isNavigable(url)) return;
+    if (!isNavigable(url) && !this.ctl.extensions?.isExtensionUrl(url)) return;
     this.blankStart = false;
     this.url = url;
     this.error = null;
@@ -441,11 +442,13 @@ class Tab {
     // Chromium already blocks web pages from opening file:, chrome: and top-level data: URLs.
     // Other custom schemes (mailto:, zoommtg:, steam:) must pass through so the
     // 'openExternal' permission prompt can ask the user.
+    // An installed extension's own pages (options, welcome page) may open in a tab.
+    const blocked = (url) => isInternalScheme(url) && !this.ctl.extensions?.isExtensionUrl(url);
     wc.on('will-navigate', (e) => {
-      if (isInternalScheme(e.url)) e.preventDefault();
+      if (blocked(e.url)) e.preventDefault();
     });
     wc.on('will-redirect', (e) => {
-      if (e.isMainFrame && isInternalScheme(e.url)) e.preventDefault();
+      if (e.isMainFrame && blocked(e.url)) e.preventDefault();
     });
     wc.on('destroyed', () => {
       this.ctl.unregisterTab(wc.id);

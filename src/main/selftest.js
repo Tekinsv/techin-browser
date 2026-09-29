@@ -133,6 +133,49 @@ async function capture(name) {
   }
 }
 
+/** A small MV3 extension that uses the parts of the API Techin adds itself. */
+function writeProbeExtension(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  const files = {
+    'manifest.json': JSON.stringify({
+      manifest_version: 3,
+      name: 'Techin Probe',
+      version: '1.0',
+      background: { service_worker: 'sw.js' },
+      action: { default_popup: 'popup.html', default_title: 'Probe' },
+      options_page: 'options.html',
+      permissions: ['tabs', 'storage', 'contextMenus'],
+      host_permissions: ['<all_urls>'],
+      content_scripts: [{ matches: ['http://127.0.0.1/*'], js: ['cs.js'] }]
+    }),
+    'sw.js': `chrome.runtime.onInstalled.addListener(() => {
+        chrome.contextMenus.create({ id: 'm1', title: 'Probe: %s', contexts: ['selection', 'page'] });
+        chrome.contextMenus.create({ id: 'm2', title: 'Probe 2', contexts: ['page'] });
+      });
+      chrome.action.setBadgeText({ text: '7' });
+      chrome.contextMenus.onClicked.addListener(() => chrome.action.setBadgeText({ text: 'C' }));
+      chrome.tabs.onUpdated.addListener((id, change, tab) => { if (change.status === 'complete' && tab.url) chrome.action.setTitle({ title: 'done ' + tab.url }); });
+      chrome.runtime.onMessage.addListener((m, sender, reply) => {
+        if (m === 'swq') { chrome.tabs.query({ active: true, lastFocusedWindow: true }).then((t) => reply(t[0] && t[0].id)); return true; }
+      });`,
+    'cs.js': "document.documentElement.dataset.probe = '1';",
+    'popup.html': '<!doctype html><html><body style="margin:0"><div style="width:300px;height:180px">popup</div><script src="popup.js"></script></body></html>',
+    'popup.js': `window.q = async () => {
+      const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+      await chrome.storage.sync.set({ s: 5 });
+      return {
+        active: t && t.id, url: t && t.url,
+        sync: (await chrome.storage.sync.get('s')).s,
+        win: (await chrome.windows.getCurrent({ populate: true })).tabs.length,
+        cb: await new Promise((r) => chrome.tabs.query({ active: true, currentWindow: true }, (x) => r(x.length))),
+        sw: await chrome.runtime.sendMessage('swq')
+      };
+    };`,
+    'options.html': '<!doctype html><title>Probe options</title><p>options</p>'
+  };
+  for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), c);
+}
+
 async function loaded(tab, ms = 15000) {
   await waitFor(() => tab.alive && !tab.wc.isLoading(), ms);
   await sleep(150);
@@ -883,8 +926,8 @@ async function run(ctl) {
         const ws = w.createTab({ url: 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh' });
         await loaded(ws, 20000);
         await sleep(4000);
-        const st = await ws.wc.executeJavaScript("({ api: typeof chrome !== 'undefined' && !!chrome.webstorePrivate, title: document.title })").catch((e) => ({ err: e.message }));
-        ok('Chrome Web Mağazası açılınca tarayıcı çökmüyor', st && st.api === false && !st.err, JSON.stringify(st));
+        const st = await ws.wc.executeJavaScript("({ api: typeof chrome !== 'undefined' && chrome.webstorePrivate === globalThis.electronWebstore, title: document.title })").catch((e) => ({ err: e.message }));
+        ok('Chrome Web Mağazası açılınca tarayıcı çökmüyor (çalışan kurulum API\'si yerinde)', st && st.api === true && !st.err, JSON.stringify(st));
         ws.close({ force: true });
         w.activateTab(tab.id);
       }
@@ -1016,7 +1059,7 @@ async function run(ctl) {
         memRows = await ux('document.querySelectorAll(".memrow").length');
       }
     }
-    ok('Tüm ayar bölümleri açıldı', sections === 10, `${sections} bölüm`);
+    ok('Tüm ayar bölümleri açıldı', sections === 11, `${sections} bölüm`);
     ok('Performans bölümü sekme belleklerini listeliyor', memRows >= 1, `${memRows} satır`);
     await ux('document.querySelectorAll(".snav button")[0].click(); true');
     await sleep(300);
@@ -1144,6 +1187,75 @@ async function run(ctl) {
     ctl.setSetting('theme', 'dark');
     await sleep(700);
     await capture('08-dark');
+
+    // --- Chrome extensions: a local test extension exercising the API we add
+    {
+      const X = ctl.extensions;
+      ok('Eklenti sistemi hazır', X && X.ready);
+      const dir = path.join(OUT_DIR, 'probe-ext-' + Date.now());
+      for (const d of fs.readdirSync(OUT_DIR)) if (d.startsWith('probe-ext-')) fs.rmSync(path.join(OUT_DIR, d), { recursive: true, force: true });
+      writeProbeExtension(dir);
+      const page = w.createTab({ url: base + '/a' });
+      await loaded(page);
+      const ext = await X.api.loadExtension(dir);
+      const id = ext.id;
+      const btn = () => (X.uiState(w).items || []).find((i) => i.id === id) || {};
+      ok('Eklenti: araç çubuğu düğmesi + rozet (service worker, chrome.action)', await waitFor(() => btn().badge === '7', 8000), JSON.stringify(btn()));
+      ok('Eklenti: düğme arayüzde çizildi', await waitFor(() => w.uiView.webContents.executeJavaScript(`!!document.querySelector('#extbar button[data-ext="${id}"] .ext-badge')`), 3000));
+      ok('Eklenti: kurulunca onInstalled geldi, sağ tık maddeleri oluştu', await waitFor(() => X.menus.get(id)?.size === 2, 5000));
+      page.reload();
+      await loaded(page);
+      ok('Eklenti: içerik betiği sayfada çalıştı', await waitFor(() => page.wc.executeJavaScript('document.documentElement.dataset.probe === "1"'), 3000));
+      ok('Eklenti: tabs.onUpdated olayı ulaştı', await waitFor(() => btn().title === 'done ' + base + '/a', 5000), btn().title);
+      const sel = X.pageMenuItems(page, { selectionText: 'Merhaba', mediaType: 'none' });
+      ok('Eklenti: seçimde sağ tık maddesi (%s)', sel.length === 1 && sel[0].label === 'Probe: Merhaba', JSON.stringify(sel.map((i) => i.label)));
+      const all = X.pageMenuItems(page, { mediaType: 'none' });
+      ok('Eklenti: birden çok madde → eklenti adıyla alt menü', all.length === 1 && all[0].submenu && all[0].submenu.length === 2);
+      if (sel[0]) sel[0].click();
+      ok('Eklenti: menü tıklaması eklentiye ulaştı, eklenti cevap verdi', await waitFor(() => btn().badge === 'C', 5000), btn().badge);
+      X.activate(w, id, { x: 900, y: 6, width: 30, height: 30 });
+      const pop = await waitFor(() => X.popup && X.popup.id === id && !X.popup.view.webContents.isLoading() && X.popup, 8000);
+      await sleep(400);
+      const pb = pop && pop.view.getBounds();
+      ok('Eklenti: açılır pencere içeriğine göre boyutlandı', pb && Math.abs(pb.width - 300) <= 2 && Math.abs(pb.height - 180) <= 2, JSON.stringify(pb));
+      await capture('14-extension-popup');
+      const q = pop ? await pop.view.webContents.executeJavaScript('q()').catch((e) => ({ err: e.message })) : {};
+      ok('Eklenti: açılır pencere etkin sekmeyi buldu (tabs.query)', q.active === page.wc.id && q.url === base + '/a', JSON.stringify(q));
+      ok('Eklenti: storage.sync, windows, callback biçimi', q.sync === 5 && q.win >= 1 && q.cb === 1, JSON.stringify(q));
+      ok('Eklenti: service worker kendi tabs.query cevabını verdi', q.sw === page.wc.id, q.sw);
+      if (pop) await pop.view.webContents.executeJavaScript('window.close(); 1').catch(() => {});
+      ok('Eklenti: window.close() açılır pencereyi kapattı', await waitFor(() => !X.popup, 3000));
+      await X.call(id, 'runtime.openOptionsPage', [], {});
+      const opt = await waitFor(() => [...w.tabs.values()].find((t) => t.url.startsWith(`chrome-extension://${id}/`) && t.alive && !t.wc.isLoading()), 5000);
+      ok('Eklenti: seçenekler sayfası sekmede açıldı', opt && opt.title === 'Probe options', opt && opt.title);
+      if (opt) w.closeTab(opt.id);
+      ctl.openExtensionSettings(w);
+      ok('Ayarlar → Eklentiler listesinde görünüyor', await waitFor(() => w.uiView.webContents.executeJavaScript("[...document.querySelectorAll('.ext-row b')].some((b) => b.textContent === 'Techin Probe')"), 4000));
+      await sleep(700);
+      await capture('15-extensions-settings');
+      w.closePanel();
+      await X.uninstall(id);
+      ok('Eklenti: kaldırıldı, düğmesi gitti', await waitFor(() => !btn().id, 3000));
+
+      if (NET && process.argv.includes('--drm')) {
+        // Chrome Web Store: after an install Chromium puts its crashing store API
+        // back on the store page; it must be swapped for the working one.
+        const store = w.createTab({ url: 'https://chromewebstore.google.com/detail/aapbdbdomjkkjkaonfhkkikfgjllcleb' });
+        await loaded(store, 30000);
+        await sleep(2500);
+        const same = () => store.wc.executeJavaScript('chrome.webstorePrivate === globalThis.electronWebstore && typeof chrome.webstorePrivate.beginInstallWithManifest3 === "function"');
+        ok('Chrome Web Mağazası: kurulum API\'si hazır', await same());
+        const { installExtension } = require('electron-chrome-web-store');
+        const gt = await installExtension('aapbdbdomjkkjkaonfhkkikfgjllcleb', { session: X.ses, extensionsPath: X.dir }).catch((e) => e);
+        ok('Mağazadan Google Çeviri kuruldu', gt && gt.id === 'aapbdbdomjkkjkaonfhkkikfgjllcleb', gt && (gt.version || gt.message));
+        store.wc.mainFrame.send('chrome.management.onInstalled', { id: 'aapbdbdomjkkjkaonfhkkikfgjllcleb', enabled: true });
+        await sleep(1500);
+        ok('Kurulumdan sonra mağaza sayfası çalışan API\'yi kullanıyor (çökme yok)', await same());
+        ok('Google Çeviri: sağ tık maddesi oluştu', await waitFor(() => X.menus.get('aapbdbdomjkkjkaonfhkkikfgjllcleb')?.size >= 1, 8000));
+        await X.uninstall('aapbdbdomjkkjkaonfhkkikfgjllcleb');
+        w.closeTab(store.id);
+      }
+    }
   } catch (err) {
     ok('Beklenmeyen hata', false, err.stack);
   }

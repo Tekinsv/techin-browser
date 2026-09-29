@@ -204,6 +204,9 @@ class Menus {
       items.push(SEP);
     }
 
+    const ext = this.ctl.extensions ? this.ctl.extensions.pageMenuItems(tab, p) : [];
+    if (ext.length) items.push(SEP, ...ext, SEP);
+
     items.push({
       label: t('İncele'),
       click: () => {
@@ -212,6 +215,53 @@ class Menus {
       }
     });
     this.popup(win, items);
+  }
+
+  // ---- extensions
+
+  /** Right-click on an extension's toolbar button. */
+  extensionMenu(win, id) {
+    const x = this.ctl.extensions;
+    const ext = x && x.api.getExtension(id);
+    if (!ext) return;
+    const t = this.t.bind(this);
+    const pinned = !this.ctl.settings.data.extUnpinned.includes(id);
+    const own = x.actionMenuItems(win, id);
+    this.popup(win, [
+      { label: x.name(ext), enabled: false },
+      SEP,
+      ...own,
+      ...(own.length ? [SEP] : []),
+      { label: t('Seçenekler'), enabled: !!x._optionsPage(ext), click: () => x.openOptions(id, win) },
+      { label: pinned ? t('Araç çubuğundan kaldır') : t('Araç çubuğuna sabitle'), click: () => this.ctl.setExtensionPinned(id, !pinned) },
+      { label: t('Eklentiyi kaldır…'), click: () => this.ctl.confirmRemoveExtension(win, id) },
+      SEP,
+      { label: t('Eklentileri yönet'), click: () => this.ctl.openExtensionSettings(win) }
+    ]);
+  }
+
+  /** The puzzle button: every installed extension, also the hidden ones. */
+  extensionsMenu(win, rect) {
+    const x = this.ctl.extensions;
+    if (!x) return;
+    const t = this.t.bind(this);
+    const items = x.list().map((e) => ({
+      label: e.name,
+      icon: e.icon ? nativeImage.createFromDataURL(e.icon).resize({ width: 16, height: 16 }) : undefined,
+      submenu: [
+        { label: t('Aç'), click: () => x.activate(win, e.id, rect) },
+        { label: e.pinned ? t('Araç çubuğundan kaldır') : t('Araç çubuğuna sabitle'), click: () => this.ctl.setExtensionPinned(e.id, !e.pinned) },
+        { label: t('Seçenekler'), enabled: e.options, click: () => x.openOptions(e.id, win) },
+        { label: t('Eklentiyi kaldır…'), click: () => this.ctl.confirmRemoveExtension(win, e.id) }
+      ]
+    }));
+    if (!items.length) items.push({ label: t('Yüklü eklenti yok'), enabled: false });
+    items.push(
+      SEP,
+      { label: t('Chrome Web Mağazası'), click: () => win.createTab({ url: 'https://chromewebstore.google.com/' }) },
+      { label: t('Eklentileri yönet'), click: () => this.ctl.openExtensionSettings(win) }
+    );
+    this.popup(win, items, rect ? { x: rect.x, y: rect.y + rect.height + 4 } : null);
   }
 
   async savePage(tab) {

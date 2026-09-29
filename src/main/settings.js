@@ -29,6 +29,8 @@ const SCHEMA = {
   adblock: { type: 'bool', def: true },
   adblockLevel: { type: 'enum', values: ['standard', 'strict'], def: 'standard' },
   adblockAllowlist: { type: 'hosts', def: [] },
+  // extension ids hidden from the toolbar (still in the extensions menu)
+  extUnpinned: { type: 'hosts', def: [] },
   malwareProtection: { type: 'bool', def: true },
   httpsOnly: { type: 'bool', def: true },
   gpc: { type: 'bool', def: true },

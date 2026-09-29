@@ -1,6 +1,7 @@
 'use strict';
 // Stroke icons (24x24). Constant strings only — never mixed with page data.
 window.ICONS = {
+  puzzle: '<path d="M10 4.5a2 2 0 1 1 4 0V6h3.5a1 1 0 0 1 1 1v3.5H17a2 2 0 1 0 0 4h1.5V18a1 1 0 0 1-1 1H14v-1.5a2 2 0 1 0-4 0V19H6.5a1 1 0 0 1-1-1v-3.5H7a2 2 0 1 0 0-4H5.5V7a1 1 0 0 1 1-1H10z"/>',
   back: '<path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>',
   forward: '<path d="M5 12h14"/><path d="M12 5l7 7-7 7"/>',
   reload: '<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M20.5 3.5V9H15"/>',

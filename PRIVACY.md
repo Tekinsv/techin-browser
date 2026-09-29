@@ -26,7 +26,10 @@ receive your history, passwords or personal data from Techin Browser.
 | Google Widevine (via castlabs component updater) | DRM module needed for protected video (Netflix etc.) | No |
 | Google spell-check dictionaries | Downloads the dictionary for your language | Turn off spell check |
 | Your search engine | Search suggestions while you type in the address bar | Turn off search suggestions |
-| Chrome Web Store | Only when you install or update an extension | — |
+| Chrome Web Store (`chromewebstore.google.com`, `clients2.google.com`, `update.googleapis.com`) | Installs the extensions you add; checks them for updates at start and every 5 hours | Remove your extensions |
+
+Extensions you install run with the permissions shown when you add them and
+follow their own privacy policies.
 
 Each of these services has its own privacy policy. Websites you visit can of
 course see your IP address and anything you send them, as in any browser.

@@ -258,6 +258,7 @@
     setIcon($('btn-siteinfo'), 'settings');
     setIcon($('btn-split'), 'split');
     setIcon($('btn-passwords'), 'key');
+    setIcon($('btn-ext'), 'puzzle');
     setIcon($('btn-star'), 'star');
     setIcon($('btn-settings'), 'gear');
     setIcon($('btn-fwd'), 'forward');
@@ -308,7 +309,32 @@
       setText(vb.querySelector('.vol-badge'), vol === 100 ? '' : String(vol));
       vb.classList.toggle('changed', vol !== 100);
     }
+    renderExtensions();
     renderUpdatePill();
+  }
+
+  // Chrome extensions: one button per pinned extension (icon + badge), puzzle menu for all
+  let extKey = '';
+  function renderExtensions() {
+    const x = S.extensions;
+    $('btn-ext').classList.toggle('hidden', !x || !x.count);
+    const items = (x && x.items) || [];
+    const key = JSON.stringify(items);
+    if (key === extKey) return;
+    extKey = key;
+    $('extbar').replaceChildren(
+      ...items.map((it) => {
+        const b = h('button', { class: 'ib ext' + (it.open ? ' on' : '') + (it.enabled ? '' : ' off'), title: it.title, dataset: { ext: it.id } });
+        b.append(it.icon ? h('img', { src: it.icon, alt: '', draggable: 'false' }) : ico('puzzle'));
+        if (it.badge) {
+          const s = h('span', { class: 'ext-badge', text: it.badge });
+          if (it.color) s.style.setProperty('background', it.color);
+          if (it.textColor) s.style.setProperty('color', it.textColor);
+          b.append(s);
+        }
+        return b;
+      })
+    );
   }
 
   function renderUpdatePill() {
@@ -543,6 +569,21 @@
     cmd('panel.open', { name: 'settings' });
   };
   $('btn-passwords').addEventListener('click', () => openSettings('passwords'));
+  const rectOf = (el) => {
+    const r = el.getBoundingClientRect();
+    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+  };
+  $('btn-ext').addEventListener('click', () => cmd('ext.overview', rectOf($('btn-ext'))));
+  $('extbar').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-ext]');
+    if (b) cmd('ext.click', { id: b.dataset.ext, ...rectOf(b) });
+  });
+  $('extbar').addEventListener('contextmenu', (e) => {
+    const b = e.target.closest('button[data-ext]');
+    if (!b) return;
+    e.preventDefault();
+    cmd('ext.menu', { id: b.dataset.ext });
+  });
   $('btn-volume').addEventListener('click', () => (S && S.modal && S.modal.type === 'volume' ? closeModal() : cmd('volume.open')));
   $('btn-settings').addEventListener('click', () => openSettings(settingsSection === 'passwords' ? 'appearance' : settingsSection));
   $('btn-appmenu').addEventListener('click', () => cmd('menu.app'));
@@ -1213,6 +1254,7 @@
     ['sites', 'Site izinleri', 'lock'],
     ['performance', 'Performans', 'zap'],
     ['downloads', 'İndirmeler', 'download'],
+    ['extensions', 'Eklentiler', 'puzzle'],
     ['import', 'İçe aktar', 'download'],
     ['general', 'Genel', 'settings'],
     ['about', 'Hakkında', 'info']
@@ -1233,7 +1275,7 @@
     );
     panelSyncs.push(() => banner.classList.toggle('hidden', !S.meta.restartNeeded));
     inner.append(banner, h('div', { class: 'group-title big', text: t(SECTIONS.find((s) => s[0] === settingsSection)[1]) }));
-    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, import: secImport, general: secGeneral, about: secAbout };
+    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, extensions: secExtensions, import: secImport, general: secGeneral, about: secAbout };
     inner.append(...builders[settingsSection]().flat().filter(Boolean));
     return h('div', { class: 'panel-body' }, nav, h('div', { class: 'panel-scroll' }, inner));
   }
@@ -1689,6 +1731,42 @@
     ];
   }
 
+  // ---- Chrome extensions
+  function secExtensions() {
+    const box = h('div', { class: 'group ext-list' }, h('div', { class: 'pw-empty', text: t('Yükleniyor…') }));
+    const load = () =>
+      cmd('ext.list').then((r) => {
+        const items = (r && r.items) || [];
+        if (!items.length) return box.replaceChildren(h('div', { class: 'pw-empty', text: t("Henüz eklenti yok. Chrome Web Mağazası'ndan ekleyebilirsiniz.") }));
+        box.replaceChildren(
+          ...items.map((e) => {
+            const pin = h('input', { type: 'checkbox', checked: e.pinned });
+            pin.addEventListener('change', () => cmd('ext.pin', { id: e.id, pinned: pin.checked }));
+            const remove = h('button', { class: 'btn small danger' }, t('Kaldır'));
+            remove.addEventListener('click', () => cmd('ext.remove', { id: e.id }).then((ok) => ok && load()));
+            return h(
+              'div',
+              { class: 'setting ext-row' },
+              e.icon ? h('img', { class: 'ext-ico', src: e.icon, alt: '' }) : h('span', { class: 'ext-ico' }, ico('puzzle')),
+              h('div', { class: 'txt' }, h('b', { text: e.name }), h('small', { text: `${e.version ? 'v' + e.version + ' · ' : ''}${e.description}` })),
+              h('label', { class: 'imp-check', title: t('Araç çubuğunda göster') }, pin, t('Araç çubuğunda')),
+              e.options ? h('button', { class: 'btn small', onclick: () => cmd('ext.options', { id: e.id }) }, t('Seçenekler')) : null,
+              remove
+            );
+          })
+        );
+      });
+    load();
+    return [
+      group(null, h('div', { class: 'setting' }, h('div', { class: 'txt' }, h('b', { text: t('Chrome Web Mağazası') }), h('small', { text: t("Mağazada bir eklentiye 'Techin Browser'a ekle' deyin; eklenti burada ve adres çubuğunun sağında görünür.") })), h('button', { class: 'btn primary small', onclick: () => cmd('ext.store') }, ico('puzzle'), t('Mağazayı aç')))),
+      group('Yüklü eklentiler', box),
+      group(
+        null,
+        h('div', { class: 'setting col' }, h('small', { text: t('Techin, Chrome eklentilerinin çoğunu çalıştırır. Google hesabıyla eşitleme, yan panel ve kendi reklam engelleme kurallarını kullanan eklentiler (uBlock Origin Lite gibi) tam çalışmayabilir; reklam engelleyici zaten Techin\'de yerleşik.') }))
+      )
+    ];
+  }
+
   // ---- import from other browsers
   function secImport() {
     const box = h('div', { class: 'group imp-list' }, h('div', { class: 'pw-empty', text: t('Tarayıcılar aranıyor…') }));
@@ -2122,7 +2200,7 @@
     const box = $('modal');
     box.replaceChildren();
     if (!m) return;
-    const builders = { palette: buildPalette, siteinfo: buildSiteInfo, volume: buildVolume, bookmark: buildBookmark, picker: buildPicker, auth: buildAuth, space: buildSpace, update: buildUpdate };
+    const builders = { palette: buildPalette, siteinfo: buildSiteInfo, volume: buildVolume, bookmark: buildBookmark, picker: buildPicker, auth: buildAuth, space: buildSpace, update: buildUpdate, extInstall: buildExtInstall };
     const el = (builders[m.type] || (() => null))(m);
     if (el) box.append(el);
   }
@@ -2489,6 +2567,22 @@
     return box;
   }
 
+  // ---- installing a Chrome extension (from the Chrome Web Store)
+  function buildExtInstall(m) {
+    const d = m.data || {};
+    const box = h('div', { class: 'pop dialog ext-install' });
+    const perms = Array.isArray(d.perms) ? d.perms : [];
+    box.append(
+      h('div', { class: 'ext-head' }, d.icon ? h('img', { src: d.icon, alt: '' }) : h('span', { class: 'ico' }, ico('puzzle')), h('h3', { text: t('"{0}" eklensin mi?', d.name || '') })),
+      perms.length ? h('p', { text: t('Bu eklenti şunları yapabilir:') }) : h('p', { text: t('Bu eklenti özel bir izin istemiyor.') }),
+      perms.length ? h('ul', { class: 'ext-perms' }, perms.map((p) => h('li', { text: p }))) : null,
+      h('small', { class: 'ext-note', text: t('Eklentiler Chrome için yapılır; çoğu Techin\'de de çalışır, bazı özellikleri çalışmayabilir.') }),
+      h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => closeModal() }, t('İptal')), h('button', { class: 'btn primary', onclick: () => closeModal({ ok: true }) }, ico('puzzle'), t('Eklentiyi ekle')))
+    );
+    centerIn(box, 440, 0.16);
+    return box;
+  }
+
   // ---- update prompt
   function buildUpdate() {
     const u = S.update || {};
@@ -2659,6 +2753,11 @@
     else if (name === 'find-focus' && findInput) {
       findInput.focus();
       findInput.select();
+    } else if (name === 'ext-open') {
+      // chrome.action.openPopup(): open it under its button (or the puzzle button)
+      const b = document.querySelector(`#extbar button[data-ext="${CSS.escape(String(data.id))}"]`) || $('btn-ext');
+      const r = b.getBoundingClientRect();
+      cmd('ext.click', { id: data.id, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
     } else if (name === 'settings-section') {
       settingsSection = data.id;
       panelKey = null;

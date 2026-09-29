@@ -59,12 +59,50 @@ if (FLAG_NO_PASSKEYS) {
 }
 
 // ------------------------------------------------------------ 2b) Chrome Web Store
-// The store calls chrome.webstorePrivate as soon as it loads. Electron exposes
-// that API only half-implemented: getReferrerChain dereferences a missing
-// Safe Browsing service and crashes the whole browser process. Hide the API
-// before the store's own scripts run; the store then treats us as a browser
-// that can't install extensions instead of crashing.
-if (/^chromewebstore\.google\.com$|^chrome\.google\.com$/.test(location.hostname)) {
+// The store calls chrome.webstorePrivate as soon as it loads. Electron's own
+// version is half-implemented: getReferrerChain dereferences a missing Safe
+// Browsing service and crashes the whole browser process. Replace it with a
+// harmless stand-in first; the store preload of electron-chrome-web-store
+// (registered after this one, see src/main/extensions.js) then puts the real,
+// working install API in its place.
+if (location.hostname === 'chromewebstore.google.com') {
+  inMain(() => {
+    const c = window.chrome;
+    if (!c) return;
+    const stub = { getReferrerChain: (cb) => (typeof cb === 'function' ? cb([]) : Promise.resolve([])) };
+    try {
+      Object.defineProperty(c, 'webstorePrivate', { value: stub, configurable: true, enumerable: true, writable: true });
+    } catch (e) {}
+  });
+  // Whenever an extension is installed or removed, Chromium puts its own
+  // (crashing) webstorePrivate/management back on this page - and the store
+  // calls them right away. Put the working ones back first: the main process
+  // sends 'techin:store-rebind' before the store hears about the install, and
+  // this listener runs before the store library's (registered earlier).
+  const rebind = () =>
+    inMain(() => {
+      const c = window.chrome;
+      if (!c) return;
+      try {
+        if (globalThis.electronWebstore && c.webstorePrivate !== globalThis.electronWebstore) c.webstorePrivate = globalThis.electronWebstore;
+        if (globalThis.electronManagement && c.management) Object.assign(c.management, globalThis.electronManagement);
+        if (globalThis.electronRuntime && c.runtime) Object.assign(c.runtime, globalThis.electronRuntime);
+      } catch (e) {}
+    });
+  for (const ch of ['techin:store-rebind', 'chrome.management.onInstalled', 'chrome.management.onUninstalled']) ipcRenderer.on(ch, rebind);
+  inMain(() => {
+    setInterval(() => {
+      const c = window.chrome;
+      if (c && globalThis.electronWebstore && c.webstorePrivate !== globalThis.electronWebstore) {
+        try {
+          c.webstorePrivate = globalThis.electronWebstore;
+          if (globalThis.electronManagement && c.management) Object.assign(c.management, globalThis.electronManagement);
+        } catch (e) {}
+      }
+    }, 250);
+  });
+} else if (location.hostname === 'chrome.google.com') {
+  // The old store address only redirects to the new one; never let it touch the API.
   inMain(() => {
     const c = window.chrome;
     if (!c) return;

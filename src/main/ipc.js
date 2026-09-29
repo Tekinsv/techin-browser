@@ -18,6 +18,8 @@ const str = (v, max = 2000) => (typeof v === 'string' && v.length <= max ? v : n
 const id = (v) => (typeof v === 'string' && (ID_RE.test(v) || /^[a-z]-[0-9a-f]{8}$/.test(v)) ? v : null);
 const int = (v, min = -1e9, max = 1e9) => (Number.isInteger(v) && v >= min && v <= max ? v : null);
 const bool = (v) => v === true;
+const extId = (v) => typeof v === 'string' && /^[a-p]{32}$/.test(v);
+const rect = (a) => ({ x: int(a.x, -1e4, 1e5) ?? 0, y: int(a.y, -1e4, 1e5) ?? 0, width: int(a.w, 0, 1e4) ?? 0, height: int(a.h, 0, 1e4) ?? 0 });
 
 const HANDLERS = {
   // ---- window
@@ -80,6 +82,16 @@ const HANDLERS = {
   },
   'bookmark.move': (ctl, w, a) => str(a.id, 40) && int(a.index, 0, 20000) !== null && ctl.bookmarks.moveOnBar(a.id, a.index),
 
+  // ---- extensions (toolbar buttons, puzzle menu, settings section)
+  'ext.click': (ctl, w, a) => extId(a.id) && ctl.extensions?.activate(w, a.id, rect(a)),
+  'ext.menu': (ctl, w, a) => extId(a.id) && ctl.menus.extensionMenu(w, a.id),
+  'ext.overview': (ctl, w, a) => ctl.menus.extensionsMenu(w, rect(a)),
+  'ext.list': (ctl) => ({ items: ctl.extensions ? ctl.extensions.list() : [] }),
+  'ext.options': (ctl, w, a) => extId(a.id) && ctl.extensions?.openOptions(a.id, w),
+  'ext.pin': (ctl, w, a) => extId(a.id) && ctl.setExtensionPinned(a.id, bool(a.pinned)),
+  'ext.remove': (ctl, w, a) => (extId(a.id) ? ctl.confirmRemoveExtension(w, a.id) : false),
+  'ext.store': (ctl, w) => w.createTab({ url: 'https://chromewebstore.google.com/' }),
+
   // per-site volume popover next to the passwords button
   'volume.open': (ctl, w) => {
     const tab = w.activeTab();
@@ -141,6 +153,7 @@ const HANDLERS = {
     if (r && typeof r === 'object') {
       if (m.type === 'picker' && str(r.id, 200)) result = { id: r.id, audio: bool(r.audio) };
       if (m.type === 'auth' && str(r.user, 500) !== null && str(r.pass, 500) !== null) result = { user: r.user, pass: r.pass };
+      if (m.type === 'extInstall' && r.ok === true) result = { ok: true };
     }
     w.closeModal(result);
   },

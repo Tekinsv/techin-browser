@@ -15,7 +15,9 @@ const DEFAULT_USER_DATA = app.getPath('userData');
 if (process.argv.includes('--selftest') && !process.env.TECHIN_USER_DATA) {
   // Self test never touches the real profile; only the list caches survive between runs.
   const dir = path.join(require('node:os').tmpdir(), 'techin-selftest-profile');
-  for (const f of ['settings.json', 'session.json', 'sites.json', 'library.json', 'history.json', 'downloads.json']) fs.rmSync(path.join(dir, f), { force: true });
+  for (const f of ['settings.json', 'session.json', 'sites.json', 'library.json', 'history.json', 'downloads.json', 'bookmarks.json', 'extensions.json']) fs.rmSync(path.join(dir, f), { force: true });
+  // No extensions left over from an earlier run (they would change every page).
+  for (const d of ['Extensions', 'Local Extension Settings']) fs.rmSync(path.join(dir, d), { recursive: true, force: true });
   process.env.TECHIN_USER_DATA = dir;
 }
 const PROFILE_SKIP = /[\\/](Cache|Code Cache|GPUCache|DawnGraphiteCache|DawnWebGPUCache|GrShaderCache|ShaderCache|Crashpad|blob_storage)$/i;
@@ -67,6 +69,7 @@ const { TechinWindow } = require('./window');
 const { Updater } = require('./updater');
 const { Passwords, sanitizePasswords } = require('./passwords');
 const { Bookmarks, sanitizeBookmarks } = require('./bookmarks');
+const { Extensions } = require('./extensions');
 const sessionCookies = require('./sessioncookies');
 
 const sessionCookieFile = () => path.join(USER_DATA, 'session-cookies.bin'); // USER_DATA is set further down
@@ -269,6 +272,9 @@ class Controller {
     installIpc(this);
     this.passwords.install();
     hardenSession(session.defaultSession, this);
+    // Chrome extensions (Chrome Web Store) - loaded before the first window opens.
+    this.extensions = new Extensions(this);
+    await this.extensions.init().catch((err) => console.error('[extensions]', err));
 
     this.library.on('changed', () => this.onLibraryChanged());
     nativeTheme.on('updated', () => {
@@ -447,6 +453,7 @@ class Controller {
 
   onWindowClosed(w) {
     this.windows.delete(w);
+    this.extensions?.onWindowClosed(w);
     if (this.lastFocused === w) this.lastFocused = [...this.windows].pop() || null;
     if (w.incognito) {
       w.session.clearStorageData().catch(() => {});
@@ -941,6 +948,33 @@ class Controller {
     if (RESTART_KEYS.has(key)) this.meta.restartNeeded = true;
     for (const w of this.windows) w.layout();
     return true;
+  }
+
+  // ------------------------------------------------------------ extensions
+
+  setExtensionPinned(id, pinned) {
+    const list = this.settings.data.extUnpinned.filter((x) => x !== id);
+    if (!pinned) list.push(id);
+    this.setSetting('extUnpinned', list);
+    this.broadcastState();
+  }
+
+  async confirmRemoveExtension(w, id) {
+    const x = this.extensions;
+    const ext = x && x.api.getExtension(id);
+    if (!ext || !w || w.win.isDestroyed()) return false;
+    const ok = await this._nativeAsk(w.win, this.t('"{0}" kaldırılsın mı?', x.name(ext)), this.t('Eklenti ve kaydettiği veriler silinir.'), this.t('Kaldır'), this.t('Vazgeç'));
+    if (!ok) return false;
+    await x.uninstall(id);
+    this.setExtensionPinned(id, true);
+    this.toast(this.t('Eklenti kaldırıldı'), 'check');
+    return true;
+  }
+
+  openExtensionSettings(w) {
+    if (!w || w.win.isDestroyed()) return;
+    w.openPanel('settings');
+    w.sendEvent('settings-section', { id: 'extensions' });
   }
 
   resetSettings() {

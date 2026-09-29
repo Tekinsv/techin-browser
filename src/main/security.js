@@ -20,12 +20,21 @@ function requestOrigin(url) {
   return originOf(url);
 }
 
+// What an installed extension's own pages may use without asking (Chrome grants
+// these from the manifest). Camera, microphone and location still ask.
+const EXTENSION_PERMISSIONS = new Set(['clipboard-read', 'clipboard-sanitized-write', 'notifications', 'fullscreen', 'persistent-storage', 'storage-access', 'idle-detection', 'background-sync']);
+
+function extensionMay(ctl, url, permission) {
+  return /^chrome-extension:\/\//.test(String(url || '')) && EXTENSION_PERMISSIONS.has(permission) && !!ctl.extensions?.isExtensionUrl(url);
+}
+
 function installPermissionHandlers(ses, ctl, incognito) {
   ses.setPermissionRequestHandler((wc, permission, callback, details = {}) => {
     try {
       if (permission === 'openExternal') {
         return ctl.promptExternal(wc, details.externalURL, callback);
       }
+      if (extensionMay(ctl, details.requestingUrl || wc.getURL(), permission)) return callback(true);
       const origin = requestOrigin(details.requestingUrl || wc.getURL());
       const names = expandPermission(permission, details);
       const verdicts = names.map((n) => decide(n, origin ? ctl.getSitePermission(origin, n, incognito) : undefined));
@@ -40,6 +49,7 @@ function installPermissionHandlers(ses, ctl, incognito) {
   });
 
   ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details = {}) => {
+    if (extensionMay(ctl, requestingOrigin || details.requestingUrl, permission)) return true;
     const origin = requestOrigin(requestingOrigin || details.requestingUrl || '');
     let names;
     if (permission === 'media') {

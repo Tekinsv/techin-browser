@@ -1276,3 +1276,23 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
 .imp-pw ol { margin: 6px 0 10px; padding-left: 20px; color: var(--card-fg-2); font-size: calc(12.5px * var(--z, 1)); line-height: 1.6; }
 .imp-pw .btn { align-self: flex-start; }
 .imp-pw .btn .i { width: 14px; height: 14px; margin-right: 4px; }
+
+/* ---------------------------------------------------------------- Chrome extensions */
+#extbar { display: flex; align-items: center; gap: 2px; }
+#extbar:empty { display: none; }
+#extbar .ext { position: relative; }
+#extbar .ext img { width: 18px; height: 18px; object-fit: contain; pointer-events: none; }
+#extbar .ext.off img { filter: grayscale(1); opacity: 0.5; }
+#extbar .ext.on { background: var(--hover); }
+#extbar .ext-badge { position: absolute; right: -1px; bottom: 1px; min-width: 13px; height: 13px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: #d93025; color: #fff; font: 600 calc(8.5px * var(--z, 1)) / 13px var(--font); text-align: center; pointer-events: none; }
+.ext-install .ext-head { display: flex; align-items: center; gap: 12px; }
+.ext-install .ext-head img, .ext-install .ext-head .ico { width: 40px; height: 40px; border-radius: 10px; flex: none; object-fit: contain; }
+.ext-install .ext-head .ico { display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.ext-install p { margin: 0; color: var(--card-fg-2); }
+.ext-install .ext-perms { margin: -6px 0 0; padding-left: 20px; color: var(--card-fg); font-size: calc(13px * var(--z, 1)); line-height: 1.6; }
+.ext-install .ext-note { color: var(--card-fg-3); }
+.ext-install .actions .btn .i { width: 14px; height: 14px; margin-right: 4px; }
+.ext-row { gap: 12px; flex-wrap: wrap; }
+.ext-row .ext-ico { width: 28px; height: 28px; flex: none; object-fit: contain; display: grid; place-items: center; color: var(--card-fg-2); }
+.ext-row .txt { flex: 1; min-width: 160px; }
+.ext-row .txt small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
