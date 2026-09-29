@@ -25,16 +25,10 @@ Your data is kept in `%APPDATA%\Techin Browser`; delete that folder to remove it
 
 No accounts, no telemetry. See [PRIVACY.md](PRIVACY.md) for what is stored and which services the browser contacts.
 
-## Code signing policy
+## Code signing
 
-Windows releases are built by [GitHub Actions](.github/workflows/release.yml) from this repository and signed during that build.
-
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org) *(application pending — current releases are unsigned)*.
-
-- Committers and reviewers: [Tekinsv](https://github.com/Tekinsv)
-- Approvers: [Tekinsv](https://github.com/Tekinsv)
-
-Every release is approved by hand before it is signed.
+Windows releases are built by [GitHub Actions](.github/workflows/release.yml) from this repository.
+They are not code-signed yet; the Widevine VMP signature for protected video is applied in that build.
 
 ## Development
 
