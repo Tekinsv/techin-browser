@@ -983,6 +983,12 @@ class Controller {
     return true;
   }
 
+  openBookmarkManager(w) {
+    if (!w || w.win.isDestroyed()) return;
+    w.openPanel('settings');
+    w.sendEvent('settings-section', { id: 'bookmarks' });
+  }
+
   openExtensionSettings(w) {
     if (!w || w.win.isDestroyed()) return;
     w.openPanel('settings');

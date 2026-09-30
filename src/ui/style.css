@@ -1296,3 +1296,30 @@ select.sel, input.txtin { background: var(--surface-2); border: 1px solid transp
 .ext-row .ext-ico { width: 28px; height: 28px; flex: none; object-fit: contain; display: grid; place-items: center; color: var(--card-fg-2); }
 .ext-row .txt { flex: 1; min-width: 160px; }
 .ext-row .txt small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---------------------------------------------------------------- bookmark folders */
+.bm.drop-in { background: color-mix(in srgb, var(--accent) 22%, transparent); outline: 1.5px solid var(--accent); color: var(--fg); }
+.bm-dialog h3 { display: flex; align-items: center; gap: 8px; }
+.bm-dialog h3 .i { width: 18px; height: 18px; color: #f5b400; fill: #f5b400; }
+.bm-field { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 10px; }
+.bm-field > span { font-size: calc(12.5px * var(--z, 1)); color: var(--card-fg-2); }
+.bm-field .sel { width: 100%; }
+.bm-dialog .txtin.hidden { display: none; }
+.bm-dialog .actions { align-items: center; }
+.btn.danger-ghost { background: transparent; color: var(--danger); }
+.btn.danger-ghost:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.btn.danger-ghost .i { width: 14px; height: 14px; margin-right: 4px; }
+.bm-tree { padding: 4px; gap: 0; }
+.bm-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px 6px calc(10px + var(--d, 0) * 22px); border-radius: 8px; border-top: 2px solid transparent; cursor: grab; }
+.bm-row:hover { background: var(--card-hover, color-mix(in srgb, var(--card-fg) 6%, transparent)); }
+.bm-row .bm-ico { width: 18px; height: 18px; display: grid; place-items: center; flex: none; color: var(--card-fg-2); }
+.bm-row .bm-ico img, .bm-row .bm-ico .fi { width: 16px; height: 16px; }
+.bm-row .txt { flex: 1; min-width: 0; }
+.bm-row .txt b { display: block; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-row .txt small { display: block; color: var(--card-fg-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-row.folder .txt b { font-weight: 600; }
+.bm-row .ib { opacity: 0; }
+.bm-row:hover .ib { opacity: 1; }
+.bm-row.drop-in, .bm-tail.drop-in { background: color-mix(in srgb, var(--accent) 18%, transparent); outline: 1.5px solid var(--accent); }
+.bm-row.drop-before { border-top-color: var(--accent); }
+.bm-tail { margin-top: 4px; padding: 10px; border: 1.5px dashed var(--card-line); border-radius: 8px; text-align: center; font-size: calc(12px * var(--z, 1)); color: var(--card-fg-3); }

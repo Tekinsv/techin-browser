@@ -1254,6 +1254,7 @@
     ['sites', 'Site izinleri', 'lock'],
     ['performance', 'Performans', 'zap'],
     ['downloads', 'İndirmeler', 'download'],
+    ['bookmarks', 'Yer imleri', 'star'],
     ['extensions', 'Eklentiler', 'puzzle'],
     ['import', 'İçe aktar', 'download'],
     ['general', 'Genel', 'settings'],
@@ -1275,7 +1276,7 @@
     );
     panelSyncs.push(() => banner.classList.toggle('hidden', !S.meta.restartNeeded));
     inner.append(banner, h('div', { class: 'group-title big', text: t(SECTIONS.find((s) => s[0] === settingsSection)[1]) }));
-    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, extensions: secExtensions, import: secImport, general: secGeneral, about: secAbout };
+    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, bookmarks: secBookmarks, extensions: secExtensions, import: secImport, general: secGeneral, about: secAbout };
     inner.append(...builders[settingsSection]().flat().filter(Boolean));
     return h('div', { class: 'panel-body' }, nav, h('div', { class: 'panel-scroll' }, inner));
   }
@@ -1728,6 +1729,85 @@
           h('button', { class: 'linkbtn', onclick: () => cmd('app.openExternalDoc', { url: 'https://passwords.google.com/options' }) }, t('Google Parola Yöneticisini aç'))
         )
       )
+    ];
+  }
+
+  // ---- bookmark manager: the whole tree. Drag onto a folder = into it, onto an
+  // item = in front of it; every row can be edited (name, address, folder) or deleted.
+  function secBookmarks() {
+    const box = h('div', { class: 'group bm-tree' }, h('div', { class: 'pw-empty', text: t('Yükleniyor…') }));
+    let drag = null;
+    let rev = -1;
+    const clear = () => box.querySelectorAll('.drop-in, .drop-before').forEach((x) => x.classList.remove('drop-in', 'drop-before'));
+    const load = () =>
+      cmd('bookmark.tree').then((r) => {
+        const tree = (r && r.tree) || [];
+        if (!tree.length) return box.replaceChildren(h('div', { class: 'pw-empty', text: t('Henüz yer imi yok. Bir sayfada adres çubuğundaki yıldıza basın (Ctrl+D).') }));
+        const rows = [];
+        const walk = (list, depth, parentId) => {
+          for (const n of list) {
+            const folder = n.type === 'folder';
+            const row = h('div', { class: 'bm-row' + (folder ? ' folder' : ''), draggable: 'true', style: { '--d': String(depth) }, dataset: { id: n.id } });
+            row.append(
+              h('span', { class: 'bm-ico' }, folder ? ico('folder') : favEl(n.favicon, n.url, n.title)),
+              h('div', { class: 'txt' }, h('b', { text: n.title || n.url || t('Klasör') }), h('small', { text: folder ? t('{0} öğe', n.children.length) : n.url })),
+              h('button', { class: 'ib sm', title: folder ? t('Klasörü düzenle') : t('Düzenle'), onclick: () => cmd('bookmark.edit', { id: n.id }) }, ico('edit')),
+              h('button', { class: 'ib sm', title: t('Sil'), onclick: () => cmd('bookmark.remove', { id: n.id }) }, ico('trash'))
+            );
+            if (!folder) row.addEventListener('dblclick', () => cmd('bookmark.open', { id: n.id, newTab: true }));
+            row.addEventListener('dragstart', (e) => {
+              drag = n.id;
+              e.dataTransfer.effectAllowed = 'move';
+              e.stopPropagation();
+            });
+            row.addEventListener('dragend', () => ((drag = null), clear()));
+            row.addEventListener('dragover', (e) => {
+              if (!drag || drag === n.id) return;
+              e.preventDefault();
+              clear();
+              row.classList.add(folder ? 'drop-in' : 'drop-before');
+            });
+            row.addEventListener('drop', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              clear();
+              if (!drag || drag === n.id) return;
+              cmd('bookmark.moveTo', folder ? { id: drag, parentId: n.id } : { id: drag, parentId: parentId || '', beforeId: n.id });
+              drag = null;
+            });
+            rows.push(row);
+            if (folder) walk(n.children, depth + 1, n.id);
+          }
+        };
+        walk(tree, 0, null);
+        // dropping below the list: to the end of the bar
+        const tail = h('div', { class: 'bm-tail', text: t('Buraya bırakırsan yer imleri çubuğunun sonuna gider') });
+        tail.addEventListener('dragover', (e) => drag && (e.preventDefault(), clear(), tail.classList.add('drop-in')));
+        tail.addEventListener('dragleave', () => tail.classList.remove('drop-in'));
+        tail.addEventListener('drop', (e) => {
+          e.preventDefault();
+          tail.classList.remove('drop-in');
+          if (drag) cmd('bookmark.moveTo', { id: drag, parentId: '' });
+          drag = null;
+        });
+        box.replaceChildren(...rows, tail);
+      });
+    // reload whenever bookmarks change (edit box, bar, another window)
+    panelSyncs.push(() => {
+      if (S.bookmarksRev !== rev) {
+        rev = S.bookmarksRev;
+        load();
+      }
+    });
+    const newFolder = h('button', { class: 'btn small', onclick: () => cmd('bookmark.newFolder', { title: t('Yeni klasör') }) }, ico('folder'), t('Yeni klasör'));
+    const barRow = row('Yer imleri çubuğu', 'Adres çubuğunun altında gösterilir (Ctrl+Shift+B).', (() => {
+      const input = h('input', { type: 'checkbox', checked: S.settings.bookmarksBar !== 'never' });
+      input.addEventListener('change', () => setSetting('bookmarksBar', input.checked ? 'always' : 'never'));
+      return h('label', { class: 'switch' }, input, h('span'));
+    })());
+    return [
+      group(null, barRow, h('div', { class: 'setting' }, h('div', { class: 'txt' }, h('b', { text: t('Düzenleme') }), h('small', { text: t('Bir yer imini klasörün üstüne sürükleyince içine girer, başka bir yer iminin üstüne sürükleyince onun önüne geçer. Kalemle adını, adresini ve klasörünü değiştirebilirsiniz.') })), newFolder)),
+      group('Tüm yer imleri', box)
     ];
   }
 
@@ -2478,10 +2558,32 @@
     const r = $('bm-more').getBoundingClientRect();
     cmd('bookmark.overflow', { ids: ($('bm-more').dataset.ids || '').split(',').filter(Boolean), x: Math.round(r.left), y: Math.round(r.bottom + 2) });
   });
-  $('bmlist').addEventListener('dragover', (e) => bmDrag && e.preventDefault());
+  // Dropped on the middle of a folder: into the folder. Elsewhere: a new place on the bar.
+  const folderUnder = (e) => {
+    const chip = e.target.closest && e.target.closest('.bm.folder');
+    if (!chip || chip.dataset.id === bmDrag) return null;
+    const r = chip.getBoundingClientRect();
+    return e.clientX > r.left + r.width * 0.2 && e.clientX < r.right - r.width * 0.2 ? chip : null;
+  };
+  const clearDropIn = () => document.querySelectorAll('#bmlist .drop-in').forEach((x) => x.classList.remove('drop-in'));
+  $('bmlist').addEventListener('dragover', (e) => {
+    if (!bmDrag) return;
+    e.preventDefault();
+    const chip = folderUnder(e);
+    if (!chip || !chip.classList.contains('drop-in')) clearDropIn();
+    if (chip) chip.classList.add('drop-in');
+  });
+  $('bmlist').addEventListener('dragleave', (e) => !$('bmlist').contains(e.relatedTarget) && clearDropIn());
   $('bmlist').addEventListener('drop', (e) => {
     if (!bmDrag) return;
     e.preventDefault();
+    clearDropIn();
+    const into = folderUnder(e);
+    if (into) {
+      cmd('bookmark.moveTo', { id: bmDrag, parentId: into.dataset.id });
+      bmDrag = null;
+      return;
+    }
     const kids = [...$('bmlist').children].filter((k) => k.dataset.id !== bmDrag);
     let index = kids.length;
     for (let i = 0; i < kids.length; i++) {
@@ -2504,26 +2606,60 @@
   addEventListener('resize', () => !$('bmbar').classList.contains('hidden') && layoutBookmarks());
 
   // ---- bookmark editor (rename / change address)
+  // The star / "Edit…": name, address and which folder it lives in (Chrome's bookmark bubble)
   function buildBookmark(m) {
     const d = m.data;
     const box = h('div', { class: 'pop dialog bm-dialog' });
     centerIn(box, 420, 0.18);
     const title = h('input', { class: 'txtin', value: d.title || '', placeholder: t('Ad'), spellcheck: 'false' });
     const url = d.folder ? null : h('input', { class: 'txtin', value: d.url || '', placeholder: 'https://', spellcheck: 'false' });
+    // folder picker: the bar, every folder (a folder not into itself or its subfolders), or a new one
+    const picker = h('select', { class: 'sel bm-folder' }, h('option', { value: '', text: t('Yer imleri çubuğu') }));
+    const folders = Array.isArray(d.folders) ? d.folders : [];
+    let skipDepth = -1;
+    for (const f of folders) {
+      if (skipDepth >= 0 && f.depth > skipDepth) continue;
+      skipDepth = -1;
+      if (d.folder && f.id === d.id) {
+        skipDepth = f.depth;
+        continue;
+      }
+      picker.append(h('option', { value: f.id, text: `${'   '.repeat(f.depth)}${f.title || t('Klasör')}` }));
+    }
+    picker.append(h('option', { value: '__new', text: t('+ Yeni klasör…') }));
+    picker.value = d.parentId || '';
+    const newName = h('input', { class: 'txtin hidden', placeholder: t('Yeni klasörün adı'), spellcheck: 'false' });
+    picker.addEventListener('change', () => {
+      newName.classList.toggle('hidden', picker.value !== '__new');
+      if (picker.value === '__new') newName.focus();
+    });
     const err = h('small', { class: 'pw-err' });
-    const save = () =>
-      cmd('bookmark.save', { id: d.id, title: title.value.trim(), ...(url ? { url: url.value.trim() } : {}) }).then((r) => {
+    const save = () => {
+      const isNew = picker.value === '__new';
+      if (isNew && !newName.value.trim()) return newName.focus();
+      cmd('bookmark.save', {
+        id: d.id,
+        title: title.value.trim(),
+        ...(url ? { url: url.value.trim() } : {}),
+        parentId: isNew ? d.parentId || '' : picker.value,
+        ...(isNew ? { newFolder: newName.value.trim() } : {})
+      }).then((r) => {
         if (!r || !r.ok) err.textContent = t('Geçerli bir adres yazın.');
       });
-    for (const i of [title, url].filter(Boolean)) i.addEventListener('keydown', (e) => e.key === 'Enter' && save());
+    };
+    for (const i of [title, url, newName].filter(Boolean)) i.addEventListener('keydown', (e) => e.key === 'Enter' && save());
+    const heading = d.isNew ? t('Yer imi eklendi') : d.folder ? t('Klasörü düzenle') : t('Yer imini düzenle');
+    const remove = h('button', { class: 'btn danger-ghost', onclick: () => cmd('bookmark.remove', { id: d.id }) }, ico('trash'), d.folder ? t('Klasörü sil') : t('Kaldır'));
     box.append(
-      h('h3', { text: d.folder ? t('Klasörü yeniden adlandır') : t('Yer imini düzenle') }),
-      title,
-      url,
+      h('h3', null, ico('star'), heading),
+      h('label', { class: 'bm-field' }, h('span', { text: t('Ad') }), title),
+      url ? h('label', { class: 'bm-field' }, h('span', { text: t('Adres') }), url) : null,
+      h('label', { class: 'bm-field' }, h('span', { text: t('Klasör') }), picker),
+      newName,
       err,
-      h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => closeModal() }, t('Vazgeç')), h('button', { class: 'btn primary', onclick: save }, t('Kaydet')))
+      h('div', { class: 'actions' }, remove, h('span', { style: { flex: '1' } }), d.isNew ? null : h('button', { class: 'btn', onclick: () => closeModal() }, t('Vazgeç')), h('button', { class: 'btn primary', onclick: save }, d.isNew ? t('Bitti') : t('Kaydet')))
     );
-    setTimeout(() => title.focus(), 0);
+    setTimeout(() => (d.isNew ? picker : title).focus(), 0);
     return box;
   }
 

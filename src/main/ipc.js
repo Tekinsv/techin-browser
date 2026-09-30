@@ -76,11 +76,27 @@ const HANDLERS = {
   'bookmark.menu': (ctl, w, a) => str(a.id, 40) && ctl.menus.bookmarkMenu(w, a.id),
   'bookmark.save': (ctl, w, a) => {
     if (!str(a.id, 40)) return { ok: false };
-    const ok = ctl.bookmarks.update(a.id, { title: str(a.title, 300) ?? undefined, url: a.url === undefined ? undefined : str(a.url, 4096) || '' });
-    if (ok && w.modal?.type === 'bookmark') w.closeModal();
-    return { ok };
+    const bm = ctl.bookmarks;
+    const ok = bm.update(a.id, { title: str(a.title, 300) ?? undefined, url: a.url === undefined ? undefined : str(a.url, 4096) || '' });
+    if (!ok) return { ok };
+    // folder picker: an existing folder ('' = the bar) or a new one made right here
+    const pid = a.parentId === undefined ? undefined : str(a.parentId, 40) || null;
+    const newFolder = (str(a.newFolder, 300) || '').trim();
+    if (newFolder) bm.move(a.id, bm.addFolder(newFolder, pid || null).id);
+    else if (pid !== undefined && bm.parentId(a.id) !== pid) bm.move(a.id, pid);
+    if (w.modal?.type === 'bookmark') w.closeModal();
+    return { ok: true };
   },
   'bookmark.move': (ctl, w, a) => str(a.id, 40) && int(a.index, 0, 20000) !== null && ctl.bookmarks.moveOnBar(a.id, a.index),
+  'bookmark.moveTo': (ctl, w, a) => (str(a.id, 40) ? ctl.bookmarks.move(a.id, str(a.parentId, 40) || null, int(a.index, 0, 20000), str(a.beforeId, 40)) : false),
+  'bookmark.remove': (ctl, w, a) => {
+    const ok = !!str(a.id, 40) && ctl.bookmarks.remove(a.id);
+    if (ok && w.modal?.type === 'bookmark') w.closeModal();
+    return ok;
+  },
+  'bookmark.edit': (ctl, w, a) => str(a.id, 40) && w.editBookmark(a.id),
+  'bookmark.newFolder': (ctl, w, a) => !!ctl.bookmarks.addFolder((str(a.title, 300) || '').trim() || ctl.t('Yeni klasör'), str(a.parentId, 40) || null),
+  'bookmark.tree': (ctl) => ({ tree: ctl.bookmarks.tree(), count: ctl.bookmarks.countAll() }),
 
   // ---- extensions (toolbar buttons, puzzle menu, settings section)
   'ext.click': (ctl, w, a) => extId(a.id) && ctl.extensions?.activate(w, a.id, rect(a)),

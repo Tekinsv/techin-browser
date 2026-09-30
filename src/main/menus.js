@@ -70,7 +70,23 @@ class Menus {
     const items = this._bmItems(win, f.node.children);
     const urls = f.node.children.filter((n) => n.type === 'url');
     if (urls.length > 1) items.push(SEP, { label: t('Tümünü yeni sekmelerde aç ({0})', urls.length), click: () => urls.slice(0, 30).forEach((n) => win.createTab({ url: n.url, background: true })) });
+    // Native menus can't be right-clicked: the manager edits what is inside folders.
+    items.push(SEP, { label: t('Yer imlerini yönet…'), click: () => this.ctl.openBookmarkManager(win) });
     this.popup(win, items, at);
+  }
+
+  /** "Move to folder" submenu: the bar and every folder (not the item itself or its own subfolders). */
+  _moveToItems(n) {
+    const bm = this.ctl.bookmarks;
+    const t = this.t.bind(this);
+    const current = bm.parentId(n.id) || null;
+    const inside = (id) => n.type === 'folder' && (id === n.id || !!bm.find(id, n.children));
+    const items = [{ label: t('Yer imleri çubuğu'), type: 'radio', checked: current === null, click: () => current !== null && bm.move(n.id, null) }];
+    for (const f of bm.folders().slice(0, 300)) {
+      if (inside(f.id)) continue;
+      items.push({ label: `${'    '.repeat(f.depth)}${(f.title || t('Klasör')).replace(/&/g, '&&')}`, type: 'radio', checked: current === f.id, click: () => current !== f.id && bm.move(n.id, f.id) });
+    }
+    return items;
   }
 
   bookmarkOverflowMenu(win, ids, at) {
@@ -90,17 +106,24 @@ class Menus {
             { label: t('Yeni sekmede aç'), click: () => win.createTab({ url: n.url }) },
             { label: t('Bağlantıyı kopyala'), click: () => clipboard.writeText(n.url) },
             SEP,
-            { label: t('Düzenle…'), click: () => win.openModal({ type: 'bookmark', data: { id: n.id, title: n.title, url: n.url, folder: false } }) },
+            { label: t('Düzenle…'), click: () => win.editBookmark(n.id) },
+            { label: t('Klasöre taşı'), submenu: this._moveToItems(n) },
             { label: t('Sil'), click: () => this.ctl.bookmarks.remove(n.id) }
           ]
         : [
-            { label: t('Yeniden adlandır…'), click: () => win.openModal({ type: 'bookmark', data: { id: n.id, title: n.title, url: '', folder: true } }) },
+            { label: t('Yeniden adlandır…'), click: () => win.editBookmark(n.id) },
+            { label: t('Klasöre taşı'), submenu: this._moveToItems(n) },
             { label: t('Klasörü sil ({0} öğe)', this.ctl.bookmarks.countAll(n.children)), click: () => this.ctl.bookmarks.remove(n.id) }
           ];
-    items.push(SEP, { label: t('Yeni klasör'), click: () => this.ctl.bookmarks.addFolder(t('Yeni klasör')) }, {
-      label: this.ctl.settings.data.bookmarksBar === 'never' ? t('Yer imleri çubuğunu göster') : t('Yer imleri çubuğunu gizle'),
-      click: () => this.ctl.setSetting('bookmarksBar', this.ctl.settings.data.bookmarksBar === 'never' ? 'always' : 'never')
-    });
+    items.push(
+      SEP,
+      { label: t('Yeni klasör'), click: () => this.ctl.bookmarks.addFolder(t('Yeni klasör')) },
+      { label: t('Yer imlerini yönet…'), click: () => this.ctl.openBookmarkManager(win) },
+      {
+        label: this.ctl.settings.data.bookmarksBar === 'never' ? t('Yer imleri çubuğunu göster') : t('Yer imleri çubuğunu gizle'),
+        click: () => this.ctl.setSetting('bookmarksBar', this.ctl.settings.data.bookmarksBar === 'never' ? 'always' : 'never')
+      }
+    );
     this.popup(win, items);
   }
 

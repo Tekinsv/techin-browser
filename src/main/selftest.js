@@ -742,6 +742,10 @@ async function run(ctl) {
       await sleep(400);
       const y1 = w.metrics().content.y;
       const ui1 = await uiq("({ bar: !document.getElementById('bmbar').classList.contains('hidden'), chips: document.querySelectorAll('#bmlist .bm').length, star: document.getElementById('btn-star').classList.contains('on') })");
+      // like Chrome, the star opens the edit box (name + folder) of the new bookmark
+      ok('Yıldız: yer imi eklenince ad/klasör kutusu açılıyor', w.modal && w.modal.type === 'bookmark' && w.modal.data.isNew && Array.isArray(w.modal.data.folders), JSON.stringify(w.modal && w.modal.data && { isNew: w.modal.data.isNew }));
+      await capture('16-bookmark-added');
+      w.closeModal();
       // open it from the bar in another tab
       const other = w.createTab({ url: base + '/b' });
       await loaded(other, 10000);
@@ -769,6 +773,48 @@ async function run(ctl) {
       w.activateTab(tab.id);
       ok('Yer imleri: yıldızla eklenince çubuk çıkıyor, tıklayınca açılıyor, silinince kalkıyor', y1 === y0 + 30 && ui1.bar && ui1.chips === 1 && ui1.star && !!opened && y2 === y0, JSON.stringify({ y0, y1, y2, ui1, opened: !!opened }));
       ok('F11 (Zen gibi): üst kenara gelince adres ve yer imleri çubuğu kayarak iniyor; çıkınca her şey geri geliyor', !!peek && ui2.open && ui2.top === 0 && ui2.bar && back, JSON.stringify({ peek: !!peek, ui2, back }));
+    }
+    // --- bookmark folders: drag onto a folder, the edit box's folder picker, the manager
+    {
+      const uiq = (code) => w.uiView.webContents.executeJavaScript(code);
+      const bm = ctl.bookmarks;
+      const { HANDLERS } = require('./ipc');
+      const folder = bm.addFolder('Klasör A');
+      const one = bm.add({ url: base + '/a', title: 'A' });
+      const two = bm.add({ url: base + '/b', title: 'B' });
+      await sleep(500);
+      const dragged = await uiq(`(() => {
+        const src = document.querySelector('#bmlist .bm[data-id="${one.id}"]');
+        const dst = document.querySelector('#bmlist .bm[data-id="${folder.id}"]');
+        if (!src || !dst) return 'missing';
+        const dt = new DataTransfer();
+        src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+        const r = dst.getBoundingClientRect();
+        const o = { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+        dst.dispatchEvent(new DragEvent('dragover', o));
+        const lit = dst.classList.contains('drop-in');
+        dst.dispatchEvent(new DragEvent('drop', o));
+        src.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+        return lit ? 'ok' : 'no highlight';
+      })()`);
+      await waitFor(() => bm.parentId(one.id) === folder.id, 2000);
+      ok('Yer imi çubukta klasörün üstüne sürüklenince klasörün içine giriyor', dragged === 'ok' && bm.parentId(one.id) === folder.id, `${dragged}, parent ${bm.parentId(one.id)}`);
+      w.editBookmark(two.id);
+      const pick = w.modal && w.modal.type === 'bookmark' && w.modal.data.folders.some((f) => f.id === folder.id);
+      await HANDLERS['bookmark.save'](ctl, w, { id: two.id, title: 'B', url: base + '/b', parentId: folder.id });
+      ok('Düzenleme kutusunda klasör seçilince yer imi o klasöre taşınıyor', pick && bm.parentId(two.id) === folder.id && !w.modal, `parent ${bm.parentId(two.id)}`);
+      await HANDLERS['bookmark.save'](ctl, w, { id: two.id, title: 'B', url: base + '/b', parentId: '', newFolder: 'Yeni K' });
+      const made = bm.folders().find((f) => f.title === 'Yeni K');
+      ok('Düzenleme kutusundan yeni klasör açılıp içine taşınıyor', made && bm.parentId(two.id) === made.id);
+      ok('Klasör kendi içine taşınamıyor', bm.move(folder.id, folder.id) === false);
+      ctl.openBookmarkManager(w);
+      const rows = await waitFor(() => uiq(`(() => { const r = [...document.querySelectorAll('.bm-row')]; const a = r.find((x) => x.dataset.id === '${one.id}'); return r.length >= 4 && a ? { rows: r.length, depth: a.style.getPropertyValue('--d') } : null; })()`), 4000);
+      ok('Ayarlar → Yer imleri: klasörler ve içindekiler ağaç olarak görünüyor', rows && rows.depth === '1', JSON.stringify(rows));
+      await sleep(600);
+      await capture('17-bookmark-manager');
+      w.closePanel();
+      for (const n of [folder, made].filter(Boolean)) bm.remove(n.id);
+      await sleep(300);
     }
 
     // --- session cookies (e.g. YouTube's theater mode "wide=1") survive a restart, encrypted on disk
@@ -1059,7 +1105,7 @@ async function run(ctl) {
         memRows = await ux('document.querySelectorAll(".memrow").length');
       }
     }
-    ok('Tüm ayar bölümleri açıldı', sections === 11, `${sections} bölüm`);
+    ok('Tüm ayar bölümleri açıldı', sections === 12, `${sections} bölüm`);
     ok('Performans bölümü sekme belleklerini listeliyor', memRows >= 1, `${memRows} satır`);
     await ux('document.querySelectorAll(".snav button")[0].click(); true');
     await sleep(300);

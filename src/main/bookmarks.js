@@ -45,6 +45,7 @@ class Bookmarks {
     this.ctl = ctl;
     this.store = store;
     this._index = null;
+    this.rev = 0; // bumps on every change (the manager in Settings reloads on it)
   }
 
   get bar() {
@@ -53,6 +54,7 @@ class Bookmarks {
 
   changed() {
     this._index = null;
+    this.rev++;
     this.store.save();
     this.ctl.onBookmarksChanged?.();
   }
@@ -154,9 +156,62 @@ class Bookmarks {
   moveOnBar(id, index) {
     const f = this.find(id);
     if (!f || f.list !== this.bar) return;
-    const [n] = this.bar.splice(f.index, 1);
-    this.bar.splice(Math.max(0, Math.min(this.bar.length, index)), 0, n);
+    this.move(id, null, index);
+  }
+
+  /** Id of the folder a node is in (null = the bar itself). */
+  parentId(id, list = this.bar, parent = null) {
+    for (const n of list) {
+      if (n.id === id) return parent;
+      if (n.type === 'folder') {
+        const r = this.parentId(id, n.children, n.id);
+        if (r !== undefined) return r;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Moves a bookmark or folder into a folder (null = the bar), at `index` or at the end.
+   * A folder can't go into itself or one of its own subfolders.
+   */
+  move(id, parentId = null, index = null, beforeId = null) {
+    const f = this.find(id);
+    if (!f || id === beforeId) return false;
+    let dest = this.bar;
+    if (parentId) {
+      const p = this.find(parentId);
+      if (!p || p.node.type !== 'folder') return false;
+      if (f.node.type === 'folder' && (p.node === f.node || this.find(parentId, f.node.children))) return false;
+      dest = p.node.children;
+    }
+    f.list.splice(f.index, 1);
+    const before = beforeId ? dest.findIndex((x) => x.id === beforeId) : -1;
+    const at = before >= 0 ? before : Number.isInteger(index) ? Math.max(0, Math.min(dest.length, index)) : dest.length;
+    dest.splice(at, 0, f.node);
     this.changed();
+    return true;
+  }
+
+  /** Every folder, flattened in tree order, for folder pickers. */
+  folders(list = this.bar, depth = 0, out = []) {
+    for (const n of list) {
+      if (n.type !== 'folder') continue;
+      out.push({ id: n.id, title: n.title, depth });
+      if (depth < 12) this.folders(n.children, depth + 1, out);
+    }
+    return out;
+  }
+
+  /** The whole tree for the bookmark manager (small icons only). */
+  tree(list = this.bar, depth = 0, count = { n: 0 }) {
+    const out = [];
+    for (const n of list) {
+      if (++count.n > 5000) break;
+      if (n.type === 'folder') out.push({ id: n.id, type: 'folder', title: n.title, children: depth < 12 ? this.tree(n.children, depth + 1, count) : [] });
+      else out.push({ id: n.id, type: 'url', title: n.title, url: n.url, favicon: n.favicon && n.favicon.length < 8000 ? n.favicon : null });
+    }
+    return out;
   }
 
   /** Imported tree -> one folder on the bar (or merged into an existing one of the same name). */

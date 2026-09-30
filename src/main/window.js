@@ -1263,12 +1263,29 @@ class TechinWindow {
   }
 
   /** The star in the address bar / Ctrl+D. */
+  /** The star / Ctrl+D, like Chrome: bookmark the page and show the edit box (name, folder, remove). */
   toggleBookmark() {
     const tab = this.activeTab();
     if (!tab || !/^(https?|file):/.test(tab.url)) return;
-    const on = this.ctl.bookmarks.toggle({ url: tab.url, title: tab.title, favicon: tab.favicon });
-    this.ctl.toast(on ? this.ctl.t('Yer imlerine eklendi') : this.ctl.t('Yer iminden kaldırıldı'), 'star');
+    const bm = this.ctl.bookmarks;
+    let n = bm.index().get(tab.url);
+    const isNew = !n;
+    if (!n) n = bm.add({ url: tab.url, title: tab.title, favicon: tab.favicon });
+    if (!n) return;
+    this.editBookmark(n.id, { isNew });
     this.scheduleState();
+  }
+
+  /** Edit box for a bookmark or folder: name (+ address), which folder it is in. */
+  editBookmark(id, { isNew = false } = {}) {
+    const bm = this.ctl.bookmarks;
+    const f = bm.find(id);
+    if (!f) return;
+    const n = f.node;
+    this.openModal({
+      type: 'bookmark',
+      data: { id: n.id, title: n.title, url: n.type === 'url' ? n.url : '', folder: n.type === 'folder', isNew, parentId: bm.parentId(n.id) || '', folders: bm.folders() }
+    });
   }
 
   toggleMaximize() {
@@ -1531,6 +1548,7 @@ class TechinWindow {
       modal: this.modal ? { type: this.modal.type, mode: this.modal.mode, text: this.modal.text, data: this.modal.data || null } : null,
       overlay: this.modal || this.panel || this.sidebarPeek || this.topPeek ? this.overlaySeq : 0,
       bookmarks: m.bmbar || this.focusMode ? ctl.bookmarks.barState() : [],
+      bookmarksRev: ctl.bookmarks.rev,
       downloads: ctl.downloads.summary(this.incognito),
       closedCount: this.closedTabs.length,
       split: this.split ? this.split.ids : null,
