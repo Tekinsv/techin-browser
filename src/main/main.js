@@ -462,12 +462,24 @@ class Controller {
     } else {
       this.saveSessionSoon();
     }
+    // Last browser window gone: close what could keep the app alive in the background
+    // (an extension's hidden page, a sign-in pop-up) so it really quits.
+    if (!this.windows.size) {
+      this.extensions?.shutdown();
+      for (const p of [...this.popups.values()]) {
+        try {
+          if (p.bw && !p.bw.isDestroyed()) p.bw.close();
+        } catch {}
+      }
+    }
   }
 
   onSecondInstance(argv) {
     const urls = argUrls(argv.slice(1));
     const w = this.lastWindow();
-    if (!w) return this.newWindow({ urls });
+    // Still running without a window (shouldn't happen): reopen the saved session,
+    // never an empty window that would then overwrite it.
+    if (!w) return this.openInitialWindows(urls);
     for (const u of urls) w.openUrl(u, { newTab: true });
     if (w.win.isMinimized()) w.win.restore();
     w.win.focus();

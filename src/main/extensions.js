@@ -8,7 +8,7 @@
 // Only the normal (non-incognito) profile has extensions, like Chrome.
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, session, ipcMain, webContents, WebContentsView, BrowserWindow, Notification, nativeImage } = require('electron');
+const { app, session, ipcMain, webContents, WebContentsView, Notification, nativeImage } = require('electron');
 
 const EXT_URL = /^chrome-extension:\/\/([a-p]{32})(?:\/|$)/;
 const STORE_URL = 'https://chromewebstore.google.com/';
@@ -88,7 +88,7 @@ class Extensions {
     this.menus = new Map(); // extId -> Map(menuId -> item), in creation order
     this.listening = new Map(); // extId -> Set(event name)
     this.cache = new Map(); // extId -> { name, icon, messages }
-    this.offscreen = new Map(); // extId -> BrowserWindow
+    this.offscreen = new Map(); // extId -> webContents of its hidden page
     this.notes = new Map(); // `${extId}\n${notificationId}` -> Notification
     this.workers = new WeakSet(); // ServiceWorkerMain objects we wired
     this.synthetic = new Map(); // techin tab id -> id for tabs without a page
@@ -291,11 +291,21 @@ class Extensions {
     this.listening.delete(id);
     this.pending.delete(id);
     this.cache.delete(id);
-    const off = this.offscreen.get(id);
-    if (off && !off.isDestroyed()) off.destroy();
-    this.offscreen.delete(id);
+    this._closeOffscreen(id);
     if (this.popup && this.popup.id === id) this.closePopup();
     this._changed();
+  }
+
+  _closeOffscreen(id) {
+    const wc = this.offscreen.get(id);
+    this.offscreen.delete(id);
+    if (wc && !wc.isDestroyed()) wc.close();
+  }
+
+  /** The last browser window closed: nothing of the extensions may keep the app running. */
+  shutdown() {
+    this.closePopup();
+    for (const id of [...this.offscreen.keys()]) this._closeOffscreen(id);
   }
 
   _changed() {
@@ -1331,26 +1341,25 @@ const CALLS = {
     return x ? [{ errorOccurred: false, url: x.tab.url, parentFrameId: -1, frameId: 0, processId: -1 }] : null;
   },
 
-  // ---- offscreen document: a hidden page of the extension
+  // ---- offscreen document: a hidden page of the extension. A page without any
+  // window (not a hidden BrowserWindow): a window would keep the browser running
+  // after its last real window closed, and reopening it then lost the session.
   async 'offscreen.createDocument'(id, [p = {}]) {
     const old = this.offscreen.get(id);
     if (old && !old.isDestroyed()) return;
     const url = `chrome-extension://${id}/${String((p && p.url) || '').replace(/^\/+/, '')}`;
     if (extIdOf(url) !== id) throw new Error('Invalid url');
-    const bw = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { session: this.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
-    bw.webContents.setAudioMuted(false);
-    this.offscreen.set(id, bw);
-    bw.on('closed', () => this.offscreen.get(id) === bw && this.offscreen.delete(id));
-    await bw.loadURL(url);
+    const wc = new WebContentsView({ webPreferences: { session: this.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } }).webContents;
+    this.offscreen.set(id, wc);
+    wc.once('destroyed', () => this.offscreen.get(id) === wc && this.offscreen.delete(id));
+    await wc.loadURL(url);
   },
   'offscreen.closeDocument'(id) {
-    const bw = this.offscreen.get(id);
-    this.offscreen.delete(id);
-    if (bw && !bw.isDestroyed()) bw.destroy();
+    this._closeOffscreen(id);
   },
   'offscreen.hasDocument'(id) {
-    const bw = this.offscreen.get(id);
-    return !!(bw && !bw.isDestroyed());
+    const wc = this.offscreen.get(id);
+    return !!(wc && !wc.isDestroyed());
   },
 
   // ---- cookies: the "cookies" permission plus host permission for the site, like Chrome

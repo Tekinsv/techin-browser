@@ -1229,6 +1229,16 @@ async function run(ctl) {
       const opt = await waitFor(() => [...w.tabs.values()].find((t) => t.url.startsWith(`chrome-extension://${id}/`) && t.alive && !t.wc.isLoading()), 5000);
       ok('Eklenti: seçenekler sayfası sekmede açıldı', opt && opt.title === 'Probe options', opt && opt.title);
       if (opt) w.closeTab(opt.id);
+      {
+        // An extension's hidden page (Google Translate's audio) must not be a window:
+        // a hidden window kept the browser alive after closing it, and reopening lost the tabs.
+        const { BrowserWindow } = require('electron');
+        const before = BrowserWindow.getAllWindows().length;
+        await X.call(id, 'offscreen.createDocument', [{ url: 'options.html', reasons: ['AUDIO_PLAYBACK'], justification: 'test' }], {});
+        const has = await X.call(id, 'offscreen.hasDocument', [], {});
+        ok('Eklenti: görünmez sayfa açıldı ama pencere değil (tarayıcıyı kapanmaktan alıkoymaz)', has && BrowserWindow.getAllWindows().length === before, `${before} -> ${BrowserWindow.getAllWindows().length}`);
+        await X.call(id, 'offscreen.closeDocument', [], {});
+      }
       ctl.openExtensionSettings(w);
       ok('Ayarlar → Eklentiler listesinde görünüyor', await waitFor(() => w.uiView.webContents.executeJavaScript("[...document.querySelectorAll('.ext-row b')].some((b) => b.textContent === 'Techin Probe')"), 4000));
       await sleep(700);
