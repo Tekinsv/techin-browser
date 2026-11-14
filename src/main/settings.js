@@ -26,6 +26,9 @@ const SCHEMA = {
   bookmarksBar: { type: 'enum', values: ['always', 'never'], def: 'always' },
   passwordSave: { type: 'bool', def: true },
   passwordAutofill: { type: 'bool', def: true },
+  // payment cards / addresses: offer to save them, fill them in
+  autofillCards: { type: 'bool', def: true },
+  autofillAddresses: { type: 'bool', def: true },
   adblock: { type: 'bool', def: true },
   adblockLevel: { type: 'enum', values: ['standard', 'strict'], def: 'standard' },
   adblockAllowlist: { type: 'hosts', def: [] },

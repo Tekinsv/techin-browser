@@ -590,6 +590,22 @@
     'Parola kopyalandı (45 sn sonra panodan silinir)': 'Password copied (cleared from the clipboard in 45 s)',
     'Parolaları içe aktar': 'Import passwords',
     'Parolaları dışa aktar': 'Export passwords',
+    // payment cards / addresses
+    'Ödeme ve adresler': 'Payments and addresses',
+    'Ödeme yöntemleri': 'Payment methods',
+    Adresler: 'Addresses',
+    'Bu kart kaydedilsin mi?': 'Save this card?',
+    'Bu adres kaydedilsin mi?': 'Save this address?',
+    'Kart kaydedildi': 'Card saved',
+    'Adres kaydedildi': 'Address saved',
+    Hayır: 'No',
+    'Kartları kaydet ve doldur': 'Save and fill cards',
+    'Adresleri kaydet ve doldur': 'Save and fill addresses',
+    'Kart numarası Windows şifrelemesiyle saklanır; güvenlik kodu (CVC) hiç kaydedilmez. Kart yalnızca güvenli (https) sayfalara, öneriye tıklayınca doldurulur.':
+      'The card number is stored with Windows encryption; the security code (CVC) is never saved. Cards are filled only on secure (https) pages, when you click the suggestion.',
+    'Ad, adres, telefon ve e-posta formlara tek tıkla doldurulur.': 'Name, address, phone and e-mail are filled into forms with one click.',
+    'Kayıtlı kart yok. Bir sitede kartla ödeme yaptığınızda kaydetmeyi önerir.': 'No saved cards. When you pay with a card on a site, Techin offers to save it.',
+    'Kayıtlı adres yok. Bir sitede adres formu doldurduğunuzda kaydetmeyi önerir.': 'No saved addresses. When you fill in an address form on a site, Techin offers to save it.',
     // bookmark folders / manager
     'Yer imleri': 'Bookmarks',
     'Yer imi eklendi': 'Bookmark added',

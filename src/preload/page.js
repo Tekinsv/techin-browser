@@ -446,7 +446,7 @@ if (/^https?:$/.test(location.protocol)) setupPasswords();
 function setupPasswords() {
   const isPw = (el) => el instanceof HTMLInputElement && el.type === 'password';
   const isTextish = (el) => el instanceof HTMLInputElement && /^(text|email|tel|)$/.test(el.type) && !el.disabled && !el.readOnly;
-  const USER_HINT = /user|e-?mail|login|account|identifier|phone|kullan|hesap|eposta/i;
+  const USER_HINT = /user|e-?mail|login|account|identifier|phone|uname|nick|session_key|kullan|hesap|e-?posta|giri[sş]/i;
   const looksUser = (el) =>
     isTextish(el) && (/username|email/.test(el.autocomplete || '') || el.type === 'email' || USER_HINT.test(`${el.name} ${el.id} ${el.getAttribute('aria-label') || ''} ${el.placeholder || ''}`));
   const shown = (el) => el.isConnected && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
@@ -623,11 +623,17 @@ function setupPasswords() {
     document.documentElement.append(host);
   }
 
+  // A username field with no password next to it (step 1 of a two-step login) only
+  // gets the list where logins are saved for this site - show() checks that.
+  const wants = (el) => isPw(el) || looksUser(el);
+  document.addEventListener('focusin', (e) => wants(e.target) && show(e.target), true);
+  // Pages often focus the username field themselves on load: no focus event comes
+  // when it is then clicked, so a click on a login field opens the list too.
   document.addEventListener(
-    'focusin',
+    'mousedown',
     (e) => {
       const el = e.target;
-      if (isPw(el) || (looksUser(el) && (passwordFields(el.form || document).length || /username|email/.test(el.autocomplete || '')))) show(el);
+      if (e.isTrusted && e.button === 0 && wants(el) && !(host && host.isConnected && target === el)) setTimeout(() => document.activeElement === el && show(el), 0);
     },
     true
   );
@@ -652,6 +658,259 @@ function setupPasswords() {
   addEventListener('resize', () => host && host.isConnected && place(), { passive: true });
 }
 
+// ------------------------------------------------------------ 4b) addresses & payment cards
+// Same rules as the passwords: isolated world, closed shadow root, only a real
+// click fills. The main process (src/main/autofill.js) never hands card numbers
+// to non-https pages. The security code (CVC) is never read for saving.
+if (/^https?:$/.test(location.protocol)) setupAutofill();
+
+function setupAutofill() {
+  const CARD = ['cc-number', 'cc-name', 'cc-exp', 'cc-exp-month', 'cc-exp-year'];
+  const ADDR = ['name', 'given-name', 'family-name', 'organization', 'street', 'line2', 'city', 'state', 'zip', 'country', 'tel', 'email'];
+  const AC_MAP = {
+    'cc-number': 'cc-number',
+    'cc-name': 'cc-name',
+    'cc-exp': 'cc-exp',
+    'cc-exp-month': 'cc-exp-month',
+    'cc-exp-year': 'cc-exp-year',
+    'cc-csc': 'cc-csc',
+    name: 'name',
+    'given-name': 'given-name',
+    'family-name': 'family-name',
+    organization: 'organization',
+    'street-address': 'street',
+    'address-line1': 'street',
+    'address-line2': 'line2',
+    'address-level2': 'city',
+    'address-level1': 'state',
+    'postal-code': 'zip',
+    country: 'country',
+    'country-name': 'country',
+    tel: 'tel',
+    'tel-national': 'tel',
+    email: 'email'
+  };
+  // name / id / placeholder / label hints, Turkish and English
+  const HINTS = [
+    ['cc-csc', /cvc|cvv|csc|g[uü]venlik.?kod|security.?code/i],
+    ['cc-number', /card.?num|cc.?num|kart.?(no|num)|cardnumber|kredi.?kart/i],
+    ['cc-name', /name.?on.?card|card.?holder|cardholder|kart.?(sahib|[uü]zerindeki)|cc.?name/i],
+    ['cc-exp-month', /exp.*(month|mm)|(month|ay).*(exp|son)|cc.?month|expmonth/i],
+    ['cc-exp-year', /exp.*(year|yy)|(year|y[ıi]l).*(exp|son)|cc.?year|expyear/i],
+    ['cc-exp', /expir|son.?kullan|valid.?thru|cc.?exp|\bmm.?\/.?yy/i],
+    ['email', /e-?mail|e-?posta/i],
+    ['tel', /phone|tel(efon)?\b|gsm|cep|mobile/i],
+    ['zip', /zip|postal|posta.?kod/i],
+    ['line2', /address.?2|address.?line.?2|adres.?2|apartment|daire/i],
+    ['street', /address|street|adres|sokak|cadde|mahalle/i],
+    ['city', /city|town|[şs]ehir|il[cç]e|district|semt/i],
+    ['state', /state|province|region|b[oö]lge/i],
+    ['country', /country|[uü]lke/i],
+    ['organization', /company|organi[sz]ation|[şs]irket|firma/i],
+    ['name', /full.?name|ad.?soyad|ad\s*ve\s*soyad|name.?surname|isim.?soyisim/i],
+    ['family-name', /last.?name|surname|family.?name|soyad/i],
+    ['given-name', /first.?name|given.?name|\bisim\b|^ad$/i],
+    ['name', /^name$|your.?name/i]
+  ];
+  const fieldOk = (el) => (el instanceof HTMLInputElement && /^(text|tel|email|number|)$/.test(el.type) && !el.disabled && !el.readOnly) || (el instanceof HTMLSelectElement && !el.disabled);
+  function kindOf(el) {
+    if (!fieldOk(el)) return null;
+    const tokens = (el.getAttribute('autocomplete') || '').toLowerCase().split(/\s+/).filter((x) => x && !/^(section-.*|shipping|billing|home|work|mobile|fax)$/.test(x));
+    const ac = tokens.pop();
+    if (ac === 'off' || ac === 'new-password' || ac === 'current-password' || ac === 'one-time-code') return null;
+    if (ac && AC_MAP[ac]) return AC_MAP[ac];
+    if (/search|captcha|coupon|kupon|promo|otp|discount|indirim/i.test(`${el.name} ${el.id}`)) return null;
+    const label = el.labels && el.labels[0] ? el.labels[0].textContent : '';
+    const text = `${el.name} ${el.id} ${el.getAttribute('aria-label') || ''} ${el.placeholder || ''} ${label}`.slice(0, 300);
+    for (const [k, re] of HINTS) if (re.test(text)) return k;
+    return null;
+  }
+  const groupOf = (k) => (CARD.includes(k) ? 'card' : ADDR.includes(k) ? 'address' : null);
+  const scopeOf = (el) => el.form || el.closest('form') || document;
+  const fieldsIn = (scope) =>
+    [...scope.querySelectorAll('input, select')]
+      .slice(0, 300)
+      .map((el) => ({ el, k: kindOf(el) }))
+      .filter((f) => f.k);
+
+  // ---- saving: read the form when it is sent
+  const digits = (v) => String(v || '').replace(/\D/g, '');
+  let lastSent = '';
+  function capture(scope) {
+    const f = fieldsIn(scope);
+    if (!f.length) return;
+    const text = (k) => {
+      const x = f.find((y) => y.k === k && String(y.el.value || '').trim());
+      if (!x) return '';
+      if (x.el instanceof HTMLSelectElement) return (x.el.selectedOptions[0] && x.el.selectedOptions[0].textContent.trim()) || x.el.value;
+      return x.el.value.trim();
+    };
+    const raw = (k) => {
+      const x = f.find((y) => y.k === k && y.el.value);
+      return x ? x.el.value : '';
+    };
+    const num = digits(text('cc-number'));
+    if (num.length >= 12) {
+      let expM = raw('cc-exp-month');
+      let expY = raw('cc-exp-year');
+      const exp = text('cc-exp');
+      if (exp && (!expM || !expY)) {
+        const m = /(\d{1,2})\s*[/\-. ]\s*(\d{2,4})/.exec(exp);
+        if (m) [expM, expY] = [m[1], m[2]];
+      }
+      if ('c' + num !== lastSent) {
+        lastSent = 'c' + num;
+        ipcRenderer.send('techin:af', { type: 'card', number: num, name: text('cc-name'), expM, expY });
+      }
+      return;
+    }
+    const name = text('name') || [text('given-name'), text('family-name')].filter(Boolean).join(' ');
+    const a = { type: 'address', name, org: text('organization'), street: text('street'), line2: text('line2'), city: text('city'), state: text('state'), zip: text('zip'), country: text('country'), phone: text('tel'), email: text('email') };
+    if (a.street && (a.city || a.zip) && 'a' + a.street + a.zip !== lastSent) {
+      lastSent = 'a' + a.street + a.zip;
+      ipcRenderer.send('techin:af', a);
+    }
+  }
+  document.addEventListener('submit', (e) => capture(e.target), true);
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (!e.isTrusted || !e.target.closest) return;
+      const b = e.target.closest('button, input[type=submit], [role=button]');
+      if (b) capture(scopeOf(b));
+    },
+    true
+  );
+
+  // ---- filling: a list under the focused field
+  let host = null;
+  let box = null;
+  let target = null;
+  const shown = (el) => el.isConnected && el.getClientRects().length > 0;
+  const setValue = (el, v) => {
+    if (v === undefined || v === null || v === '') return;
+    if (el instanceof HTMLSelectElement) {
+      const want = String(v).toLowerCase();
+      const n = parseInt(v, 10);
+      const opt =
+        [...el.options].find((o) => o.value.toLowerCase() === want || o.textContent.trim().toLowerCase() === want) ||
+        (n ? [...el.options].find((o) => parseInt(o.value, 10) === n || parseInt(o.value, 10) === n % 100) : null);
+      if (!opt) return;
+      el.value = opt.value;
+    } else {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, String(v));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  function hide() {
+    if (host) host.remove();
+    target = null;
+  }
+  function place() {
+    if (!host || !target || !shown(target)) return hide();
+    const r = target.getBoundingClientRect();
+    const below = r.bottom + 4 + 200 < innerHeight || r.top < 210;
+    host.style.cssText = `all: initial; position: fixed; z-index: 2147483647; left: ${Math.round(Math.max(4, Math.min(r.left, innerWidth - 304)))}px; ${below ? `top: ${Math.round(r.bottom + 4)}px` : `bottom: ${Math.round(innerHeight - r.top + 4)}px`};`;
+  }
+  function build() {
+    host = document.createElement('techin-autofill');
+    const root = host.attachShadow({ mode: 'closed' });
+    const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+    const style = document.createElement('style');
+    style.textContent = `
+      .box { font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; width: 300px; max-height: 220px; overflow: auto;
+        background: ${dark ? '#1f232b' : '#ffffff'}; color: ${dark ? '#e8eaf0' : '#1b1f27'}; border: 1px solid ${dark ? '#343a46' : '#dde1e8'};
+        border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.28); padding: 4px; }
+      .hd { font-size: 11px; opacity: .6; padding: 6px 10px 4px; }
+      button { all: unset; box-sizing: border-box; display: flex; gap: 10px; align-items: center; width: 100%; padding: 7px 10px; border-radius: 7px; cursor: pointer; }
+      button:hover { background: ${dark ? '#2c3340' : '#eef2f8'}; }
+      .k { width: 24px; height: 24px; flex: none; border-radius: 6px; display: grid; place-items: center; background: #3b6fe0; color: #fff; font-size: 13px; }
+      .t { display: flex; flex-direction: column; min-width: 0; } .u, .s { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .s { font-size: 11.5px; opacity: .6; }`;
+    box = document.createElement('div');
+    box.className = 'box';
+    root.append(style, box);
+  }
+  async function fill(group, id, field) {
+    hide();
+    const d = await ipcRenderer.invoke('techin:af-fill', group, id).catch(() => null);
+    if (!d || !field.isConnected) return;
+    for (const { el, k } of fieldsIn(scopeOf(field))) {
+      if (group === 'card') {
+        const yy = d.expY ? String(d.expY) : '';
+        const mm = d.expM ? String(d.expM).padStart(2, '0') : '';
+        if (k === 'cc-number') setValue(el, d.number);
+        else if (k === 'cc-name') setValue(el, d.name);
+        else if (k === 'cc-exp-month') setValue(el, el instanceof HTMLSelectElement ? d.expM : mm);
+        else if (k === 'cc-exp-year') setValue(el, el instanceof HTMLSelectElement ? d.expY : el.maxLength === 2 ? yy.slice(2) : yy);
+        else if (k === 'cc-exp' && mm && yy) setValue(el, el.maxLength > 0 && el.maxLength < 7 ? `${mm}/${yy.slice(2)}` : `${mm}/${yy}`);
+      } else {
+        const parts = (d.name || '').trim().split(/\s+/);
+        const map = {
+          name: d.name,
+          'given-name': parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0],
+          'family-name': parts.length > 1 ? parts[parts.length - 1] : '',
+          organization: d.org,
+          street: d.street,
+          line2: d.line2,
+          city: d.city,
+          state: d.state,
+          zip: d.zip,
+          country: d.country,
+          tel: d.phone,
+          email: d.email
+        };
+        if (k in map) setValue(el, map[k]);
+      }
+    }
+  }
+  async function show(el, group) {
+    const items = await ipcRenderer.invoke('techin:af-query', group).catch(() => []);
+    if (!items.length || document.activeElement !== el) return;
+    if (!host) build();
+    target = el;
+    box.replaceChildren();
+    const hd = document.createElement('div');
+    hd.className = 'hd';
+    hd.textContent = group === 'card' ? 'Techin · kayıtlı kartlar' : 'Techin · kayıtlı adresler';
+    box.append(hd);
+    for (const it of items) {
+      const b = document.createElement('button');
+      const k = document.createElement('span');
+      k.className = 'k';
+      k.textContent = group === 'card' ? '💳' : '📍';
+      const t = document.createElement('span');
+      t.className = 't';
+      const u = document.createElement('span');
+      u.className = 'u';
+      u.textContent = it.title;
+      const s = document.createElement('span');
+      s.className = 's';
+      s.textContent = it.sub || '';
+      t.append(u, s);
+      b.append(k, t);
+      b.addEventListener('mousedown', (e) => e.preventDefault());
+      b.addEventListener('click', (e) => e.isTrusted && fill(group, it.id, el));
+      box.append(b);
+    }
+    place();
+    document.documentElement.append(host);
+  }
+  const offer = (el) => {
+    const k = kindOf(el);
+    let g = k && k !== 'cc-csc' ? groupOf(k) : null;
+    // login forms belong to the password list (section 4)
+    if (g === 'address' && scopeOf(el).querySelector('input[type=password]')) g = null;
+    if (g && !(host && host.isConnected && target === el)) show(el, g);
+  };
+  document.addEventListener('focusin', (e) => offer(e.target), true);
+  document.addEventListener('mousedown', (e) => e.isTrusted && e.button === 0 && setTimeout(() => document.activeElement === e.target && offer(e.target), 0), true);
+  document.addEventListener('focusout', () => setTimeout(() => target && document.activeElement !== target && hide(), 150), true);
+  document.addEventListener('keydown', (e) => e.key === 'Escape' && host && host.isConnected && hide(), true);
+  document.addEventListener('input', (e) => e.isTrusted && e.target === target && hide(), true);
+  addEventListener('scroll', () => host && host.isConnected && place(), { capture: true, passive: true });
+}
+
 // ------------------------------------------------------------ 3) smooth wheel
 // YouTube Shorts: one wheel notch = one video, slid with a compositor transform
 // (see ytTransformSlide), so it stays smooth while YouTube is busy.
@@ -671,17 +930,27 @@ if (IS_YOUTUBE && YT_MODE === 'snap') {
 // its heavy video switch, when nothing is moving anymore.
 // The same slide works for any full-page snap feed (Instagram Reels, TikTok...):
 // see snapFeedWheel() in the smooth-wheel section.
-let feedSlideState = null; // { anims, movers, feed, target, start, snap, anchor }
+let feedSlideState = null; // { anims, movers, feed, target, start, snap, anchor, tops }
+const SLIDE_MS = 420;
 
 function endFeedSlide(jump) {
   const s = feedSlideState;
   if (!s) return;
   feedSlideState = null;
   // Same task: move the feed and remove the transform -> no visible jump.
-  if (jump) s.feed.scrollTo({ top: s.target, behavior: 'instant' });
+  if (jump && s.feed.isConnected) s.feed.scrollTo({ top: s.target, behavior: 'instant' });
   for (const a of s.anims) a.cancel();
   s.feed.style.scrollSnapType = s.snap;
   s.feed.style.overflowAnchor = s.anchor;
+}
+
+/** Current translateY of an element (its running slide), 0 if none. */
+function slideOffset(el) {
+  try {
+    return new DOMMatrixReadOnly(getComputedStyle(el).transform).m42 || 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -690,33 +959,36 @@ function endFeedSlide(jump) {
  * Returns true when the wheel event was handled.
  */
 function feedSlide(feed, movers, tops, down) {
-  if (tops.length < 2 || !movers.length || typeof movers[0].animate !== 'function') return false;
+  if (!movers.length || typeof movers[0].animate !== 'function') return false;
   let s = feedSlideState;
-  if (s && s.feed !== feed) {
-    endFeedSlide(true);
+  const now = performance.now();
+  // A slide that can't finish normally any more (the site re-rendered or removed
+  // the items, the animation got cancelled, or it simply overran) used to stay
+  // "running" forever, and every later notch went wrong. Settle it first.
+  if (s && (s.feed !== feed || now - s.start > SLIDE_MS + 800 || !s.feed.isConnected || s.movers.some((m) => !m.isConnected) || s.anims.some((a) => a.playState === 'idle'))) {
+    endFeedSlide(s.feed === feed && s.movers.every((m) => m.isConnected));
     s = null;
   }
+  // While items are sliding their measured positions include the slide: keep
+  // using the positions measured when it began.
+  if (s && s.tops) tops = s.tops;
+  if (tops.length < 2) return false;
   const cur = feed.scrollTop;
   const base = s ? s.target : cur;
   const target = down ? tops.find((p) => p > base + 20) : [...tops].reverse().find((p) => p < base - 20);
   if (target === undefined) return !!s; // end of feed
-  const now = performance.now();
   // One physical notch can arrive as several wheel events: extend a running
   // slide only for a clearly separate notch, and never more than one item ahead.
   if (s && (now - s.start < 250 || Math.abs(s.target - cur) > 20)) return true;
-  let from = 0;
-  if (s) {
-    try {
-      from = new DOMMatrixReadOnly(getComputedStyle(s.movers[0]).transform).m42;
-    } catch {}
-    for (const a of s.anims) a.cancel();
-  }
-  const frames = [{ transform: `translateY(${from}px)` }, { transform: `translateY(${cur - target}px)` }];
+  if (s) movers = [...new Set([...s.movers, ...movers])];
+  // Each mover continues from where it is now (some may not have been moving).
+  const from = movers.map((m) => (s ? slideOffset(m) : 0));
+  if (s) for (const a of s.anims) a.cancel();
   // Matched to Firefox in a 60 fps recording: ~45% of the way in the first 80 ms,
   // then a long, soft ease-out.
-  const timing = { duration: 420, easing: 'cubic-bezier(0.25, 0.75, 0.3, 1)', fill: 'forwards' };
-  const anims = movers.map((m) => m.animate(frames, timing));
-  const next = { anims, movers, feed, target, start: now, snap: s ? s.snap : feed.style.scrollSnapType, anchor: s ? s.anchor : feed.style.overflowAnchor };
+  const timing = { duration: SLIDE_MS, easing: 'cubic-bezier(0.25, 0.75, 0.3, 1)', fill: 'forwards' };
+  const anims = movers.map((m, i) => m.animate([{ transform: `translateY(${from[i]}px)` }, { transform: `translateY(${cur - target}px)` }], timing));
+  const next = { anims, movers, feed, target, start: now, snap: s ? s.snap : feed.style.scrollSnapType, anchor: s ? s.anchor : feed.style.overflowAnchor, tops };
   if (!s) {
     // Chromium re-snaps a mandatory snap container when its snapped item moves -
     // which a transform does - and would scroll the feed back against the slide.
@@ -724,11 +996,29 @@ function feedSlide(feed, movers, tops, down) {
     feed.style.overflowAnchor = 'none';
   }
   feedSlideState = next;
-  anims[0].onfinish = () => {
-    if (feedSlideState === next) endFeedSlide(true);
-  };
+  // Finished -> jump the feed there. Cancelled by the site (finished rejects) -> settle anyway.
+  Promise.all(anims.map((a) => a.finished)).then(
+    () => feedSlideState === next && endFeedSlide(true),
+    () => feedSlideState === next && endFeedSlide(true)
+  );
   return true;
 }
+// Leaving a page (YouTube's in-app navigation, back/forward) never keeps a slide hanging.
+// And a click outside the feed while it slides (YouTube's Home / Subscriptions link)
+// cancels it right away: its final scroll used to make YouTube switch back to the
+// next Short after the user had left, so that Short kept playing on screen.
+for (const ev of ['yt-navigate-start', 'popstate', 'pagehide']) {
+  addEventListener(ev, () => endFeedSlide(false), true);
+  document.addEventListener(ev, () => endFeedSlide(false), true);
+}
+addEventListener(
+  'pointerdown',
+  (e) => {
+    const s = feedSlideState;
+    if (s && e.isTrusted && !e.composedPath().includes(s.feed)) endFeedSlide(false);
+  },
+  true
+);
 
 function ytItemTops(feed, inner) {
   const top = feed.getBoundingClientRect().top;

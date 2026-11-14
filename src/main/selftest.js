@@ -38,6 +38,12 @@ function startServer() {
     '/login':
       '<!doctype html><title>Login</title><form action="/welcome" method="get" style="padding:40px;display:grid;gap:10px;width:260px"><input id="u" name="email" type="email" autocomplete="username" placeholder="E-posta"><input id="p" name="pass" type="password" placeholder="Parola"><button id="go">Giriş</button></form>',
     '/welcome': '<!doctype html><title>Welcome</title><h1>Hoş geldin</h1>',
+    // the page focuses the username itself; step 1 of a two-step login (no password field)
+    '/login-auto': '<!doctype html><title>Login</title><form action="/welcome" style="padding:40px;display:grid;gap:10px;width:260px"><input id="u" name="email" type="email" autofocus placeholder="E-posta"><input id="p" name="pass" type="password" placeholder="Parola"><button id="go">Giriş</button></form>',
+    '/step1': '<!doctype html><title>Step</title><form action="/welcome" style="padding:40px;display:grid;gap:10px;width:260px"><input id="u" name="identifier" type="email" placeholder="E-posta veya telefon"><button id="go">İleri</button></form>',
+    // a payment form and an address form (the address one has no autocomplete attributes: found by names)
+    '/pay': '<!doctype html><title>Pay</title><form id="f" onsubmit="event.preventDefault()" style="padding:40px;display:grid;gap:10px;width:300px"><input id="cn" name="cardnumber" autocomplete="cc-number" placeholder="Kart numarası"><input id="nm" name="ccname" autocomplete="cc-name" placeholder="Kart üzerindeki isim"><input id="ex" name="exp" autocomplete="cc-exp" maxlength="5" placeholder="AA/YY"><input id="cv" name="cvc" placeholder="CVC"><button id="go">Öde</button></form>',
+    '/addr': '<!doctype html><title>Addr</title><form id="f" onsubmit="event.preventDefault()" style="padding:40px;display:grid;gap:10px;width:300px"><input id="nm" name="fullname" placeholder="Ad Soyad"><input id="st" name="address" placeholder="Adres"><input id="ct" name="city" placeholder="Şehir"><input id="zp" name="zip" placeholder="Posta kodu"><input id="ph" name="phone" placeholder="Telefon"><button id="go">Kaydet</button></form>',
     // Icon that arrives slowly while the page rewrites its URL (like YouTube): the tab must keep the icon.
     '/favpage': '<!doctype html><title>Fav</title><link rel="icon" href="/fav.png"><script>setTimeout(() => history.replaceState(null, "", "/favpage?pp=1"), 60)</script><h1>icon</h1>',
     // a chat like Instagram DMs: newest message at the bottom, scroller is flex column-reverse
@@ -439,6 +445,21 @@ async function run(ctl) {
       if (list) await click(pt.wc, { x: list.x + 60, y: list.y + 44 });
       const filled = await waitFor(() => pt.wc.executeJavaScript("document.getElementById('p').value === 'Gizli-Parola-123' && document.getElementById('u').value === 'deneme@ornek.com'"), 3000, 100);
       ok('Öneriye tıklayınca kullanıcı adı ve parola dolduruluyor (öncesinde sayfa parolayı göremiyor)', leaked && !!filled);
+      // the page put the focus in the username field itself: clicking it must still show the list
+      const listShown = () => waitFor(() => pt.wc.executeJavaScript("(() => { const e = document.querySelector('techin-passwords'); return !!e && e.isConnected && e.getBoundingClientRect().height > 20; })()"), 3000, 100);
+      pt.load(base + '/login-auto');
+      await loaded(pt, 10000);
+      await sleep(400);
+      pt.wc.focus();
+      await pt.wc.executeJavaScript("{ const e = document.querySelector('techin-passwords'); if (e) e.remove(); } true");
+      await click(pt.wc, await center(pt.wc, '#u'));
+      ok('Sayfanın kendisi odakladığı kullanıcı adı alanına tıklayınca da öneri çıkıyor', !!(await listShown()));
+      pt.load(base + '/step1');
+      await loaded(pt, 10000);
+      await sleep(300);
+      pt.wc.focus();
+      await click(pt.wc, await center(pt.wc, '#u'));
+      ok('Parola alanı olmayan ilk adımda (yalnızca e-posta) da kayıtlı hesap öneriliyor', !!(await listShown()));
       // another origin (localhost instead of 127.0.0.1) gets nothing
       pt.load(base.replace('127.0.0.1', 'localhost') + '/login');
       await loaded(pt, 10000);
@@ -451,6 +472,76 @@ async function run(ctl) {
       pt.close({ force: true });
       w.activateTab(tab.id);
       if (item) ctl.passwords.remove(item.id);
+    }
+
+    // --- payment cards and addresses: save after sending a form, fill on a click (never the CVC)
+    {
+      const click = async (wc, p) => {
+        for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+          wc.sendInputEvent({ type, x: Math.round(p.x), y: Math.round(p.y), button: 'left', clickCount: 1 });
+          await sleep(40);
+        }
+      };
+      const center = (wc, sel) => wc.executeJavaScript(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      const listRect = (wc) =>
+        waitFor(() => wc.executeJavaScript("(() => { const e = document.querySelector('techin-autofill'); if (!e || !e.isConnected) return null; const r = e.getBoundingClientRect(); return r.height > 20 ? { x: r.left, y: r.top, h: r.height } : null; })()"), 3000, 100);
+      const af = ctl.autofill;
+      const pay = w.createTab({ url: base + '/pay' });
+      await loaded(pay, 10000);
+      await pay.wc.executeJavaScript("for (const [i, v] of [['cn', '4111 1111 1111 1111'], ['nm', 'Deneme Kişi'], ['ex', '08/29'], ['cv', '987']]) document.getElementById(i).value = v; document.getElementById('f').requestSubmit(); true");
+      const cbar = await waitFor(() => w.infobars.find((b) => b.type === 'autofill' && b.mode === 'card' && b.tabId === pay.id), 4000, 100);
+      ok('Kartla ödeme formu gönderilince "Bu kart kaydedilsin mi?" soruluyor', !!cbar && /1111/.test(cbar.host), cbar && cbar.host);
+      await sleep(300);
+      await capture('19-card-save');
+      if (cbar) w.respondInfobar(cbar.id, 'save');
+      const card = af.cards.find((c) => c.last4 === '1111');
+      const raw = JSON.stringify(af.store.data);
+      ok('Kart numarası şifreli kaydedildi, güvenlik kodu (CVC) hiç kaydedilmedi', !!card && !raw.includes('4111111111111111') && !raw.includes('987') && card.expM === 8 && card.expY === 2029 && card.name === 'Deneme Kişi', card && `${card.brand} ${card.last4} ${card.expM}/${card.expY}`);
+      pay.load(base + '/pay');
+      await loaded(pay, 10000);
+      await sleep(300);
+      pay.wc.focus();
+      await click(pay.wc, await center(pay.wc, '#cn'));
+      const cl = await listRect(pay.wc);
+      await capture('20-card-suggest');
+      if (cl) await click(pay.wc, { x: cl.x + 80, y: cl.y + 46 });
+      const cfill = await waitFor(
+        () =>
+          pay.wc
+            .executeJavaScript("(() => { const v = (i) => document.getElementById(i).value; return v('cn') === '4111111111111111' && v('nm') === 'Deneme Kişi' && v('ex') === '08/29' && v('cv') === '' ? 'ok' : JSON.stringify([v('cn'), v('nm'), v('ex'), v('cv')]); })()")
+            .then((r) => (r === 'ok' ? r : null)),
+        3000,
+        100
+      );
+      ok('Kart alanına tıklayınca kayıtlı kart öneriliyor, tıklayınca numara/isim/tarih doluyor (CVC boş)', !!cl && !!cfill, JSON.stringify(cl));
+      pay.close({ force: true });
+      const ad = w.createTab({ url: base + '/addr' });
+      await loaded(ad, 10000);
+      await ad.wc.executeJavaScript("for (const [i, v] of [['nm', 'Ayşe Yılmaz'], ['st', 'Atatürk Cad. No 5'], ['ct', 'İzmir'], ['zp', '35000'], ['ph', '05551112233']]) document.getElementById(i).value = v; document.getElementById('f').requestSubmit(); true");
+      const abar = await waitFor(() => w.infobars.find((b) => b.type === 'autofill' && b.mode === 'address' && b.tabId === ad.id), 4000, 100);
+      if (abar) w.respondInfobar(abar.id, 'save');
+      const addr = af.addresses.find((a) => a.street === 'Atatürk Cad. No 5');
+      ok('Adres formu gönderilince adres kaydedilmek üzere soruluyor ve kaydediliyor', !!abar && !!addr && addr.city === 'İzmir' && addr.zip === '35000' && addr.name === 'Ayşe Yılmaz', abar ? abar.host : 'çubuk yok');
+      ad.load(base + '/addr');
+      await loaded(ad, 10000);
+      await sleep(300);
+      ad.wc.focus();
+      await click(ad.wc, await center(ad.wc, '#st'));
+      const al = await listRect(ad.wc);
+      if (al) await click(ad.wc, { x: al.x + 80, y: al.y + 46 });
+      const afill = await waitFor(
+        () =>
+          ad.wc
+            .executeJavaScript("['nm', 'st', 'ct', 'zp', 'ph'].map((i) => document.getElementById(i).value).join('|')")
+            .then((r) => (r === 'Ayşe Yılmaz|Atatürk Cad. No 5|İzmir|35000|05551112233' ? r : null)),
+        3000,
+        100
+      );
+      ok('Adres alanına tıklayınca kayıtlı adres öneriliyor, tıklayınca tüm form doluyor', !!al && !!afill);
+      ad.close({ force: true });
+      w.activateTab(tab.id);
+      if (card) af.remove('card', card.id);
+      if (addr) af.remove('address', addr.id);
     }
 
     // --- New tab: command bar, start page or home page (setting)
@@ -631,9 +722,11 @@ async function run(ctl) {
 
     // --- "open on the other screen": the live tab moves to a fullscreen window on the other monitor
     {
-      const others = ctl.otherDisplays(w);
+      // never onto the main screen while someone works there (the test runs on the side screen)
+      const primary = require('electron').screen.getPrimaryDisplay().id;
+      const others = ctl.otherDisplays(w).filter((d) => d.id !== primary || process.env.TECHIN_TEST_MAIN_SCREEN);
       if (!others.length) {
-        ok('Sekme yan ekranda tam ekran açılıyor (tek ekran: atlandı)', true, 'ikinci ekran yok');
+        ok('Sekme yan ekranda tam ekran açılıyor (atlandı: boş ikinci ekran yok)', true, 'ana ekrana açılmadı');
       } else {
         const st = w.createTab({ url: base + '/a' });
         await loaded(st, 10000);
@@ -1095,17 +1188,18 @@ async function run(ctl) {
     }
     const sections = await ux('document.querySelectorAll(".snav button").length');
     let memRows = 0;
+    const perf = await ux('[...document.querySelectorAll(".snav button")].findIndex((b) => /Performans|Performance/.test(b.textContent))');
     for (let i = 0; i < sections; i++) {
       await ux(`document.querySelectorAll(".snav button")[${i}].click(); true`);
-      await sleep(i === 5 ? 900 : i === 3 ? 500 : 180);
+      await sleep(i === perf ? 900 : i === 3 ? 500 : 180);
       if (i === 2) await capture('06b-privacy');
       if (i === 3) await capture('06d-passwords');
-      if (i === 5) {
+      if (i === perf) {
         await capture('06c-performance');
         memRows = await ux('document.querySelectorAll(".memrow").length');
       }
     }
-    ok('Tüm ayar bölümleri açıldı', sections === 12, `${sections} bölüm`);
+    ok('Tüm ayar bölümleri açıldı', sections === 13, `${sections} bölüm`);
     ok('Performans bölümü sekme belleklerini listeliyor', memRows >= 1, `${memRows} satır`);
     await ux('document.querySelectorAll(".snav button")[0].click(); true');
     await sleep(300);

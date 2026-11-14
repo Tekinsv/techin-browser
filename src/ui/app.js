@@ -1251,6 +1251,7 @@
     ['search', 'Arama', 'search'],
     ['privacy', 'Gizlilik ve güvenlik', 'shield'],
     ['passwords', 'Parolalar', 'key'],
+    ['autofill', 'Ödeme ve adresler', 'user'],
     ['sites', 'Site izinleri', 'lock'],
     ['performance', 'Performans', 'zap'],
     ['downloads', 'İndirmeler', 'download'],
@@ -1276,7 +1277,7 @@
     );
     panelSyncs.push(() => banner.classList.toggle('hidden', !S.meta.restartNeeded));
     inner.append(banner, h('div', { class: 'group-title big', text: t(SECTIONS.find((s) => s[0] === settingsSection)[1]) }));
-    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, sites: secSites, performance: secPerformance, downloads: secDownloads, bookmarks: secBookmarks, extensions: secExtensions, import: secImport, general: secGeneral, about: secAbout };
+    const builders = { appearance: secAppearance, search: secSearch, privacy: secPrivacy, passwords: secPasswords, autofill: secAutofill, sites: secSites, performance: secPerformance, downloads: secDownloads, bookmarks: secBookmarks, extensions: secExtensions, import: secImport, general: secGeneral, about: secAbout };
     inner.append(...builders[settingsSection]().flat().filter(Boolean));
     return h('div', { class: 'panel-body' }, nav, h('div', { class: 'panel-scroll' }, inner));
   }
@@ -1563,6 +1564,29 @@
   let pwQuery = '';
   const pwShown = new Map(); // id -> revealed password (hidden again after 30 s)
   let pwReload = null; // set while the passwords section is on screen
+
+  // ---- payment cards and addresses: saved from forms, filled on a click (never the CVC)
+  let afReload = null;
+  function secAutofill() {
+    const cards = h('div', { class: 'group' }, h('div', { class: 'pw-empty', text: t('Yükleniyor…') }));
+    const addrs = h('div', { class: 'group' }, h('div', { class: 'pw-empty', text: t('Yükleniyor…') }));
+    const item = (title, sub, kind, id) =>
+      h('div', { class: 'setting' }, h('div', { class: 'txt' }, h('b', { text: title }), sub ? h('small', { text: sub }) : null), h('button', { class: 'btn small', onclick: () => cmd('autofill.remove', { kind, id }).then(load) }, ico('trash'), t('Sil')));
+    const load = () =>
+      cmd('autofill.list').then((d) => {
+        const c = (d && d.cards) || [];
+        const a = (d && d.addresses) || [];
+        cards.replaceChildren(...(c.length ? c.map((x) => item(`${x.brand} •••• ${x.last4}`, [x.name, x.exp].filter(Boolean).join(' · '), 'card', x.id)) : [h('div', { class: 'pw-empty', text: t('Kayıtlı kart yok. Bir sitede kartla ödeme yaptığınızda kaydetmeyi önerir.') })]));
+        addrs.replaceChildren(...(a.length ? a.map((x) => item(x.name || x.street, [x.street, x.line2, x.zip, x.city, x.state, x.country, x.phone, x.email].filter(Boolean).join(', '), 'address', x.id)) : [h('div', { class: 'pw-empty', text: t('Kayıtlı adres yok. Bir sitede adres formu doldurduğunuzda kaydetmeyi önerir.') })]));
+      });
+    afReload = load;
+    load();
+    return [
+      group(null, row('Kartları kaydet ve doldur', 'Kart numarası Windows şifrelemesiyle saklanır; güvenlik kodu (CVC) hiç kaydedilmez. Kart yalnızca güvenli (https) sayfalara, öneriye tıklayınca doldurulur.', toggle('autofillCards')), row('Adresleri kaydet ve doldur', 'Ad, adres, telefon ve e-posta formlara tek tıkla doldurulur.', toggle('autofillAddresses'))),
+      group('Ödeme yöntemleri', cards),
+      group('Adresler', addrs)
+    ];
+  }
 
   function secPasswords() {
     let data = null;
@@ -2224,6 +2248,11 @@
           : h('span', { class: 'msg' }, h('b', { text: bar.host }), ' ', t('için parola kaydedilsin mi?'), who);
       buttons = [h('button', { class: 'btn primary small', onclick: respond('save') }, bar.mode === 'update' ? t('Güncelle') : t('Kaydet'))];
       if (bar.mode !== 'update') buttons.push(h('button', { class: 'btn small', onclick: respond('never') }, t('Bu sitede asla')));
+    } else if (bar.type === 'autofill') {
+      icon = bar.mode === 'card' ? 'key' : 'user';
+      const sub = bar.username ? h('small', { text: bar.username }) : null;
+      msg = h('span', { class: 'msg' }, bar.mode === 'card' ? t('Bu kart kaydedilsin mi?') : t('Bu adres kaydedilsin mi?'), ' ', h('b', { text: bar.host }), sub);
+      buttons = [h('button', { class: 'btn primary small', onclick: respond('save') }, t('Kaydet')), h('button', { class: 'btn small', onclick: respond('dismiss') }, t('Hayır'))];
     } else if (bar.type === 'external') {
       icon = 'external';
       msg = h('span', { class: 'msg', title: bar.url }, h('b', { text: (bar.origin || '').replace(/^https?:\/\//, '') }), ' ', t('bilgisayarınızdaki bir uygulamayı açmak istiyor'), h('small', { text: bar.host + ':' }));
@@ -2894,6 +2923,8 @@
       const b = document.querySelector(`#extbar button[data-ext="${CSS.escape(String(data.id))}"]`) || $('btn-ext');
       const r = b.getBoundingClientRect();
       cmd('ext.click', { id: data.id, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) });
+    } else if (name === 'autofill-changed') {
+      if (afReload && S && S.panel === 'settings') afReload();
     } else if (name === 'settings-section') {
       settingsSection = data.id;
       panelKey = null;

@@ -96,6 +96,9 @@ const HANDLERS = {
   },
   'bookmark.edit': (ctl, w, a) => str(a.id, 40) && w.editBookmark(a.id),
   'bookmark.newFolder': (ctl, w, a) => !!ctl.bookmarks.addFolder((str(a.title, 300) || '').trim() || ctl.t('Yeni klasör'), str(a.parentId, 40) || null),
+  // ---- payment cards / addresses (Settings -> Ödeme ve adresler)
+  'autofill.list': (ctl) => ctl.autofill.list(),
+  'autofill.remove': (ctl, w, a) => (['card', 'address'].includes(a.kind) && str(a.id, 40) ? ctl.autofill.remove(a.kind, a.id) : false),
   'bookmark.tree': (ctl) => ({ tree: ctl.bookmarks.tree(), count: ctl.bookmarks.countAll() }),
 
   // ---- extensions (toolbar buttons, puzzle menu, settings section)

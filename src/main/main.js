@@ -15,7 +15,7 @@ const DEFAULT_USER_DATA = app.getPath('userData');
 if (process.argv.includes('--selftest') && !process.env.TECHIN_USER_DATA) {
   // Self test never touches the real profile; only the list caches survive between runs.
   const dir = path.join(require('node:os').tmpdir(), 'techin-selftest-profile');
-  for (const f of ['settings.json', 'session.json', 'sites.json', 'library.json', 'history.json', 'downloads.json', 'bookmarks.json', 'extensions.json']) fs.rmSync(path.join(dir, f), { force: true });
+  for (const f of ['settings.json', 'session.json', 'sites.json', 'library.json', 'history.json', 'downloads.json', 'bookmarks.json', 'extensions.json', 'autofill.json']) fs.rmSync(path.join(dir, f), { force: true });
   // No extensions left over from an earlier run (they would change every page).
   for (const d of ['Extensions', 'Local Extension Settings']) fs.rmSync(path.join(dir, d), { recursive: true, force: true });
   process.env.TECHIN_USER_DATA = dir;
@@ -70,6 +70,7 @@ const { Updater } = require('./updater');
 const { Passwords, sanitizePasswords } = require('./passwords');
 const { Bookmarks, sanitizeBookmarks } = require('./bookmarks');
 const { Extensions } = require('./extensions');
+const { Autofill, sanitizeAutofill } = require('./autofill');
 const sessionCookies = require('./sessioncookies');
 
 const sessionCookieFile = () => path.join(USER_DATA, 'session-cookies.bin'); // USER_DATA is set further down
@@ -97,6 +98,17 @@ process.on('unhandledRejection', (err) => logLine('unhandledRejection', err && e
 app.on('child-process-gone', (_e, d) => logLine('child-process-gone', d.type, d.reason, d.exitCode, d.name || ''));
 app.on('render-process-gone', (_e, wc, d) => logLine('render-process-gone', d.reason, d.exitCode, wc && !wc.isDestroyed() ? wc.getURL().slice(0, 200) : ''));
 const SELFTEST = process.argv.includes('--selftest');
+
+/** Self test windows open on a second screen (an ASUS one if there is), never on the main one. */
+function testDisplayBounds() {
+  const { screen } = require('electron');
+  const all = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  const d = all.find((x) => /asus/i.test(x.label || '')) || all.find((x) => x.id !== primary.id);
+  if (!d) return null;
+  const a = d.workArea;
+  return { x: a.x + 20, y: a.y + 20, width: Math.min(1440, a.width - 40), height: Math.min(908, a.height - 40) };
+}
 
 // ------------------------------------------------------------ early settings & switches
 
@@ -127,6 +139,8 @@ function applySwitches(s) {
   if (disable.length) cl.appendSwitch('disable-features', disable.join(','));
 }
 applySwitches(settingsStore.data);
+// Self test: no sound at all (tab mute states keep working, they are separate).
+if (SELFTEST) app.commandLine.appendSwitch('mute-audio');
 
 const CHROME_MAJOR = String(process.versions.chrome || '140').split('.')[0];
 // A plain Chrome user agent: sites (and Google sign-in) treat us like Chrome.
@@ -209,6 +223,7 @@ class Controller {
       debounceMs: 1500
     });
     this.downloadsStore = store('downloads.json', { defaults: () => ({ items: [] }), sanitize: sanitizeDownloads });
+    this.autofill = new Autofill(this, store('autofill.json', { defaults: () => ({ cards: [], addresses: [] }), sanitize: sanitizeAutofill, debounceMs: 300 }));
     this.bookmarks = new Bookmarks(this, store('bookmarks.json', { defaults: () => ({ bar: [] }), sanitize: sanitizeBookmarks }));
     this.passwords = new Passwords(this, store('passwords.json', { defaults: () => ({ items: [], never: [] }), sanitize: sanitizePasswords, debounceMs: 300 }));
     this.windows = new Set();
@@ -271,6 +286,7 @@ class Controller {
     installAppSecurity(this);
     installIpc(this);
     this.passwords.install();
+    this.autofill.install();
     hardenSession(session.defaultSession, this);
     // Chrome extensions (Chrome Web Store) - loaded before the first window opens.
     this.extensions = new Extensions(this);
@@ -368,6 +384,7 @@ class Controller {
 
   newWindow({ incognito = false, urls = [], restore = null, bounds = null, sideScreen = false } = {}) {
     if (!incognito) this.sessionFrozen = false;
+    if (SELFTEST && !bounds) bounds = testDisplayBounds();
     const w = new TechinWindow(this, { incognito, restore, urls, bounds, sideScreen });
     this.windows.add(w);
     this.lastFocused = w;
@@ -453,7 +470,12 @@ class Controller {
 
   onWindowClosed(w) {
     this.windows.delete(w);
-    this.extensions?.onWindowClosed(w);
+    // An error here must never skip saving the session / quitting below.
+    try {
+      this.extensions?.onWindowClosed(w);
+    } catch (err) {
+      logLine('extensions.onWindowClosed', err && err.stack);
+    }
     if (this.lastFocused === w) this.lastFocused = [...this.windows].pop() || null;
     if (w.incognito) {
       w.session.clearStorageData().catch(() => {});
@@ -514,7 +536,7 @@ class Controller {
   }
 
   flushStores() {
-    for (const s of [this.settings, this.sites, this.library.store, this.history.store, this.downloadsStore, this.passwords.store, this.bookmarks.store]) s.saveNow();
+    for (const s of [this.settings, this.sites, this.library.store, this.history.store, this.downloadsStore, this.passwords.store, this.bookmarks.store, this.autofill.store]) s.saveNow();
   }
 
   quit() {

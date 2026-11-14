@@ -71,6 +71,8 @@ class TechinWindow {
       icon: ctl.iconPath,
       ...(s.material === 'mica' && !incognito ? { backgroundMaterial: 'mica' } : {})
     });
+    // Kept: once the window is destroyed its id can't be read any more.
+    this.winId = this.win.id;
     if (restore?.maximized) this.win.maximize();
 
     this.uiView = new WebContentsView({
@@ -267,7 +269,8 @@ class TechinWindow {
     const [W, H] = this.win.getContentSize();
     const s = this.ctl.settings.data;
     if (this.htmlFullscreen || this.focusMode) {
-      return { W, H, sidebar: 0, gap: 0, top: 0, radius: 0, content: { x: 0, y: 0, width: W, height: H }, bare: true };
+      // F11 / video fullscreen: no sidebar column; peeking in from the edge it keeps its own (compact) width.
+      return { W, H, sidebar: 0, gap: 0, top: 0, radius: 0, content: { x: 0, y: 0, width: W, height: H }, peekWidth: s.sidebarCompact ? COMPACT_WIDTH : s.sidebarWidth, bare: true };
     }
     // Auto-hide: no sidebar column, just a thin strip at the edge that reveals it on hover.
     const auto = s.sidebarAutoHide && !s.sidebarHidden;

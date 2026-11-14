@@ -625,7 +625,7 @@ class Extensions {
 
   onWindowClosed(w) {
     if (this.popup && this.popup.win === w) this.closePopup();
-    this._broadcast('windows.onRemoved', [w.win.id]);
+    this._broadcast('windows.onRemoved', [w.winId]);
   }
 
   // ------------------------------------------------------------ context menus
@@ -1352,7 +1352,11 @@ const CALLS = {
     const wc = new WebContentsView({ webPreferences: { session: this.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } }).webContents;
     this.offscreen.set(id, wc);
     wc.once('destroyed', () => this.offscreen.get(id) === wc && this.offscreen.delete(id));
-    await wc.loadURL(url);
+    // A first load that gets cut off (it happens now and then) is tried once more.
+    await wc.loadURL(url).catch(async () => {
+      await new Promise((r) => setTimeout(r, 250));
+      if (!wc.isDestroyed()) await wc.loadURL(url).catch((err) => console.error('[extensions] offscreen', err.message));
+    });
   },
   'offscreen.closeDocument'(id) {
     this._closeOffscreen(id);
